@@ -19,7 +19,7 @@ class CFCoercerAccessor:
     """Dataset-level CF helpers.
 
     Methods:
-    - ``check_compliant()``: inspect CF-1.12 metadata issues.
+    - ``check()``: inspect CF-1.12 metadata issues.
     - ``make_compliant()``: return dataset with safe, automatic fixes applied.
     """
 
@@ -27,7 +27,7 @@ class CFCoercerAccessor:
         self._ds = xarray_obj
 
     @wraps(check_dataset_compliant, assigned=_WRAPS_ASSIGNED)
-    def check_compliant(
+    def check(
         self,
         *,
         cf_version: str = "1.12",

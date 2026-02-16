@@ -13,7 +13,7 @@ def test_check_reports_missing_conventions_and_coord_attrs() -> None:
         coords={"time": [0, 1], "lat": [10.0, 11.0], "lon": [20.0, 21.0]},
     )
 
-    issues = ds.cf.check_compliant()
+    issues = ds.cf.check()
 
     assert issues["cf_version"] == "CF-1.12"
     assert issues["engine"] == "cfchecker"
@@ -44,7 +44,7 @@ def test_make_compliant_sets_expected_metadata_for_time_lat_lon() -> None:
     assert out["lon"].attrs["standard_name"] == "longitude"
     assert out["lon"].attrs["units"] == "degrees_east"
     assert out["lon"].attrs["axis"] == "X"
-    assert out["temp"].attrs["coordinates"] == "time lat lon"
+    assert "coordinates" not in out["temp"].attrs
 
 
 def test_time_only_dataset_supported() -> None:
@@ -75,7 +75,7 @@ def test_lat_lon_only_dataset_supported() -> None:
 def test_unknown_dims_are_reported_but_not_forced() -> None:
     ds = xr.Dataset(data_vars={"v": (("station",), [1, 2, 3])})
 
-    issues = ds.cf.check_compliant()
+    issues = ds.cf.check()
     out = ds.cf.make_compliant()
 
     if issues["engine_status"] == "unavailable":
@@ -96,7 +96,7 @@ def test_fallback_checker_reports_variable_level_issues(monkeypatch) -> None:
         coords={"time": [0, 1]},
     )
 
-    issues = ds.cf.check_compliant()
+    issues = ds.cf.check()
 
     assert issues["engine_status"] == "unavailable"
     assert "bad-name" in issues["variables"]
@@ -120,7 +120,7 @@ def test_standard_name_suggestions_from_xml(monkeypatch) -> None:
     ds["tos"].attrs["units"] = "degC"
 
     table = Path("tests/data/cf-standard-name-table.xml")
-    issues = ds.cf.check_compliant(standard_name_table_xml=str(table))
+    issues = ds.cf.check(standard_name_table_xml=str(table))
 
     suggestions = issues["suggestions"]["variables"]["tos"]
     assert "sea_surface_temperature" in suggestions["recommended_standard_names"]
@@ -141,7 +141,7 @@ def test_units_check_for_known_standard_name_from_xml(monkeypatch) -> None:
     ds["sst"].attrs["units"] = "degC"
 
     table = Path("tests/data/cf-standard-name-table.xml")
-    issues = ds.cf.check_compliant(standard_name_table_xml=str(table))
+    issues = ds.cf.check(standard_name_table_xml=str(table))
 
     unit_check = issues["suggestions"]["variables"]["sst"]["units_check"]
     assert unit_check["status"] == "mismatch"
@@ -161,7 +161,7 @@ def test_standard_name_table_file_url_is_supported(monkeypatch) -> None:
     ds["tos"].attrs["long_name"] = "surface ocean temperature"
 
     table_url = Path("tests/data/cf-standard-name-table.xml").resolve().as_uri()
-    issues = ds.cf.check_compliant(standard_name_table_xml=table_url)
+    issues = ds.cf.check(standard_name_table_xml=table_url)
 
     suggestions = issues["suggestions"]["variables"]["tos"]
     assert "sea_surface_temperature" in suggestions["recommended_standard_names"]
@@ -181,11 +181,11 @@ def test_domain_bias_changes_suggested_standard_name(monkeypatch) -> None:
 
     table = Path("tests/data/cf-standard-name-table.xml")
 
-    ocean = ds.cf.check_compliant(
+    ocean = ds.cf.check(
         standard_name_table_xml=str(table),
         domain="ocean",
     )
-    atmosphere = ds.cf.check_compliant(
+    atmosphere = ds.cf.check(
         standard_name_table_xml=str(table),
         domain="atmosphere",
     )
@@ -208,7 +208,7 @@ def test_pretty_print_prints_yaml_like_output(monkeypatch, capsys) -> None:
         coords={"time": [0, 1]},
     )
 
-    report = ds.cf.check_compliant(pretty_print=True)
+    report = ds.cf.check(pretty_print=True)
     out = capsys.readouterr().out
 
     assert report is None
