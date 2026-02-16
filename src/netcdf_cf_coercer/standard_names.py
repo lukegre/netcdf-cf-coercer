@@ -16,6 +16,14 @@ _SYNONYMS = {
     "temp": "temperature",
 }
 
+_DOMAIN_KEYWORDS: dict[str, set[str]] = {
+    "ocean": {"sea", "ocean", "salinity", "marine", "sea_water"},
+    "atmosphere": {"air", "atmosphere", "aerosol", "cloud", "wind"},
+    "land": {"soil", "land", "terrestrial", "vegetation", "canopy"},
+    "cryosphere": {"ice", "snow", "glacier", "sea_ice"},
+    "biogeochemistry": {"ph", "alkalinity", "nitrate", "oxygen", "chlorophyll"},
+}
+
 
 @dataclass(frozen=True)
 class StandardNameEntry:
@@ -91,13 +99,19 @@ def _units_compatible(actual: str | None, expected: str | None) -> bool:
 
 
 def _best_standard_name_candidates(
-    var_name: str, long_name: str | None, entries: tuple[StandardNameEntry, ...], top_n: int = 3
+    var_name: str,
+    long_name: str | None,
+    entries: tuple[StandardNameEntry, ...],
+    top_n: int = 3,
+    domain: str | None = None,
 ) -> list[StandardNameEntry]:
     query = _tokenize_name(var_name)
     if long_name:
         query |= _tokenize_name(long_name)
     if not query:
         return []
+
+    domain_tokens = _DOMAIN_KEYWORDS.get(_normalize_name(domain or ""), set())
 
     scored: list[tuple[float, StandardNameEntry]] = []
     for entry in entries:
@@ -110,6 +124,8 @@ def _best_standard_name_candidates(
         score = overlap / max(len(cand_tokens), 1)
         if entry.name in var_name:
             score += 0.2
+        if domain_tokens and (cand_tokens & domain_tokens):
+            score += 0.3
         scored.append((score, entry))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -117,7 +133,10 @@ def _best_standard_name_candidates(
 
 
 def augment_issues_with_standard_name_suggestions(
-    ds: xr.Dataset, issues: dict[str, Any], standard_name_xml: str | None
+    ds: xr.Dataset,
+    issues: dict[str, Any],
+    standard_name_xml: str | None,
+    domain: str | None = None,
 ) -> None:
     if not standard_name_xml:
         return
@@ -141,11 +160,17 @@ def augment_issues_with_standard_name_suggestions(
         long_name = da.attrs.get("long_name")
 
         if standard_name is None:
-            candidates = _best_standard_name_candidates(var_name, long_name, entries)
+            candidates = _best_standard_name_candidates(
+                var_name,
+                long_name,
+                entries,
+                domain=domain,
+            )
             if candidates:
                 var_suggestions[var_name] = {
                     "recommended_standard_names": [entry.name for entry in candidates],
                     "recommended_units": candidates[0].canonical_units or None,
+                    "domain": domain,
                 }
             continue
 

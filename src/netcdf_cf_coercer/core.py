@@ -347,6 +347,7 @@ def check_dataset_compliant(
     cf_region_names_xml: str | None = None,
     cache_tables: bool = False,
     standard_name_table_xml: str | None = CF_STANDARD_NAME_TABLE_URL,
+    domain: str | None = None,
     fallback_to_heuristic: bool = True,
 ) -> dict[str, Any]:
     """Run CF compliance checks using cfchecker on an in-memory NetCDF payload."""
@@ -360,7 +361,12 @@ def check_dataset_compliant(
             cache_tables=cache_tables,
         )
         table_xml = standard_name_table_xml or cf_standard_names_xml
-        augment_issues_with_standard_name_suggestions(ds, issues, table_xml)
+        augment_issues_with_standard_name_suggestions(
+            ds,
+            issues,
+            table_xml,
+            domain=domain,
+        )
         return issues
     except Exception as exc:
         if not fallback_to_heuristic:
@@ -368,7 +374,12 @@ def check_dataset_compliant(
         fallback = _heuristic_check_dataset(ds)
         fallback["suggestions"] = {"variables": {}}
         table_xml = standard_name_table_xml or cf_standard_names_xml
-        augment_issues_with_standard_name_suggestions(ds, fallback, table_xml)
+        augment_issues_with_standard_name_suggestions(
+            ds,
+            fallback,
+            table_xml,
+            domain=domain,
+        )
         fallback["checker_error"] = {
             "type": type(exc).__name__,
             "message": str(exc),

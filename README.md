@@ -37,3 +37,6 @@ Notes:
 - `cfchecker` requires the system `udunits2` library via `cfunits`.
 - If `cfchecker` cannot run, `check_compliant()` falls back to heuristic checks and includes
   a `checker_error` field in the response.
+- You can bias standard-name suggestions by domain, e.g.
+  `ds.cf.check_compliant(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
+  and `biogeochemistry`).

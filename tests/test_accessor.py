@@ -164,3 +164,33 @@ def test_standard_name_table_file_url_is_supported(monkeypatch) -> None:
 
     suggestions = issues["suggestions"]["variables"]["tos"]
     assert "sea_surface_temperature" in suggestions["recommended_standard_names"]
+
+
+def test_domain_bias_changes_suggested_standard_name(monkeypatch) -> None:
+    def _raise(*args, **kwargs):
+        raise RuntimeError("force fallback")
+
+    monkeypatch.setattr(core, "_run_cfchecker_on_dataset", _raise)
+
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+    ds["temp"].attrs["long_name"] = "temperature"
+
+    table = Path("tests/data/cf-standard-name-table.xml")
+
+    ocean = ds.cf.check_compliant(
+        standard_name_table_xml=str(table),
+        domain="ocean",
+    )
+    atmosphere = ds.cf.check_compliant(
+        standard_name_table_xml=str(table),
+        domain="atmosphere",
+    )
+
+    ocean_top = ocean["suggestions"]["variables"]["temp"]["recommended_standard_names"][0]
+    atmosphere_top = atmosphere["suggestions"]["variables"]["temp"]["recommended_standard_names"][0]
+
+    assert ocean_top == "sea_surface_temperature"
+    assert atmosphere_top == "air_temperature"
