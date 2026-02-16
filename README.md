@@ -19,17 +19,17 @@ ds = xr.Dataset(
     coords={"time": [0], "lat": [10.0], "lon": [20.0]},
 )
 
-issues = ds.cf.check_compliant()
+issues = ds.cf.check()
 fixed = ds.cf.make_compliant()
 ```
 
 You can also request a YAML-like text report printed to stdout:
 
 ```python
-ds.cf.check_compliant(pretty_print=True)
+ds.cf.check(pretty_print=True)
 ```
 
-`check_compliant()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
+`check()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
 in-memory NetCDF payload created from the dataset (no `.nc` file written to disk), and
 returns a dictionary of detected issues.
 
@@ -37,12 +37,11 @@ returns a dictionary of detected issues.
 - `Conventions = "CF-1.12"`
 - standard coordinate attributes for inferred `time`, `lat`, and `lon` axes
 - creation of missing dimension coordinates for inferred axes
-- optional `coordinates` attribute on data variables for clarity
 
 Notes:
 - `cfchecker` requires the system `udunits2` library via `cfunits`.
-- If `cfchecker` cannot run, `check_compliant()` falls back to heuristic checks and includes
+- If `cfchecker` cannot run, `check()` falls back to heuristic checks and includes
   a `checker_error` field in the response.
 - You can bias standard-name suggestions by domain, e.g.
-  `ds.cf.check_compliant(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
+  `ds.cf.check(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
   and `biogeochemistry`).
