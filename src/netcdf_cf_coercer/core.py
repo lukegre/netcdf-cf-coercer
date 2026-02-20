@@ -20,12 +20,61 @@ _LON_NAMES = {"lon", "longitude", "x"}
 _TIME_NAMES = {"time", "t"}
 _NON_COMPLIANT_CATEGORIES = ("FATAL", "ERROR", "WARN")
 _VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_SUPPORTED_CONVENTIONS = ("cf", "ferret")
+_DEFAULT_CONVENTIONS = ("cf", "ferret")
 
 
 @dataclass(frozen=True)
 class AxisGuess:
     dim: str
     axis_type: str
+
+
+def _empty_report(cf_version: str = "1.12") -> dict[str, Any]:
+    return {
+        "cf_version": _format_cf_version(cf_version),
+        "engine": "cfchecker",
+        "engine_status": "skipped",
+        "check_method": "conventions_only",
+        "global": [],
+        "coordinates": {},
+        "variables": {},
+        "suggestions": {"variables": {}},
+        "notes": [],
+    }
+
+
+def _normalize_requested_conventions(
+    conventions: str | list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    if conventions is None:
+        return _DEFAULT_CONVENTIONS
+
+    if isinstance(conventions, str):
+        raw = [part.strip() for part in conventions.split(",")]
+    else:
+        raw = [str(part).strip() for part in conventions]
+
+    selected: list[str] = []
+    for name in raw:
+        if not name:
+            continue
+        lowered = name.lower()
+        if lowered not in selected:
+            selected.append(lowered)
+
+    if not selected:
+        raise ValueError("At least one convention must be selected.")
+
+    unknown = sorted(set(selected) - set(_SUPPORTED_CONVENTIONS))
+    if unknown:
+        allowed = ", ".join(_SUPPORTED_CONVENTIONS)
+        invalid = ", ".join(unknown)
+        raise ValueError(
+            f"Unsupported conventions: {invalid}. Supported conventions: {allowed}."
+        )
+
+    return tuple(selected)
 
 
 def _normalize_name(name: str) -> str:
@@ -233,6 +282,88 @@ def _heuristic_check_dataset(ds: xr.Dataset) -> dict[str, Any]:
     return issues
 
 
+def _append_coordinate_finding(
+    issues: dict[str, Any], coord_name: str, finding: dict[str, Any]
+) -> None:
+    coord_findings = issues.setdefault("coordinates", {})
+    items = coord_findings.setdefault(coord_name, [])
+    if isinstance(items, list):
+        items.append(finding)
+
+
+def _apply_ferret_convention_checks(ds: xr.Dataset, issues: dict[str, Any]) -> None:
+    for coord_name, coord in ds.coords.items():
+        sources: dict[str, Any] = {}
+        attrs_fill = coord.attrs.get("_FillValue")
+        if attrs_fill is not None:
+            sources["attrs"] = attrs_fill
+        if "_FillValue" in coord.encoding:
+            encoding_fill = coord.encoding.get("_FillValue")
+            if encoding_fill is not None:
+                sources["encoding"] = encoding_fill
+
+        if not sources:
+            continue
+
+        detail_parts = [f"{where}={value!r}" for where, value in sources.items()]
+        _append_coordinate_finding(
+            issues,
+            str(coord_name),
+            {
+                "severity": "FATAL",
+                "convention": "ferret",
+                "item": "coord_fillvalue_forbidden",
+                "message": (
+                    f"Coordinate '{coord_name}' has forbidden _FillValue "
+                    f"({', '.join(detail_parts)})."
+                ),
+                "current": sources,
+                "expected": "no _FillValue in coordinate attrs or encoding",
+                "suggested_fix": "clear_coordinate_fillvalue",
+            },
+        )
+
+
+def _apply_selected_convention_checks(
+    ds: xr.Dataset, issues: dict[str, Any], conventions: tuple[str, ...]
+) -> None:
+    if "ferret" in conventions:
+        _apply_ferret_convention_checks(ds, issues)
+
+
+def _recompute_counts(issues: dict[str, Any]) -> None:
+    counts = {"fatal": 0, "error": 0, "warn": 0}
+    for entries in list((issues.get("coordinates") or {}).values()) + list(
+        (issues.get("variables") or {}).values()
+    ):
+        if not isinstance(entries, list):
+            continue
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            severity = str(item.get("severity", "")).upper()
+            if severity == "FATAL":
+                counts["fatal"] += 1
+            elif severity == "ERROR":
+                counts["error"] += 1
+            elif severity == "WARN":
+                counts["warn"] += 1
+
+    global_entries = issues.get("global") or []
+    if isinstance(global_entries, list):
+        for item in global_entries:
+            if not isinstance(item, dict):
+                continue
+            severity = str(item.get("severity", "")).upper()
+            if severity == "FATAL":
+                counts["fatal"] += 1
+            elif severity == "ERROR":
+                counts["error"] += 1
+            elif severity == "WARN":
+                counts["warn"] += 1
+    issues["counts"] = counts
+
+
 def _as_netcdf_bytes(ds: xr.Dataset) -> bytes:
     # cfchecker is metadata-oriented; avoid materializing potentially large,
     # lazy-backed arrays by serializing a compact metadata-only shadow dataset.
@@ -409,50 +540,60 @@ def check_dataset_compliant(
     cache_tables: bool = False,
     domain: str | None = None,
     fallback_to_heuristic: bool = True,
+    conventions: str | list[str] | tuple[str, ...] | None = None,
     pretty_print: bool = False,
 ) -> dict[str, Any] | None:
-    """Run CF compliance checks using cfchecker on an in-memory NetCDF payload."""
-    try:
-        issues = _run_cfchecker_on_dataset(
-            ds,
-            cf_version=cf_version,
-            standard_name_table_xml=standard_name_table_xml,
-            cf_area_types_xml=cf_area_types_xml,
-            cf_region_names_xml=cf_region_names_xml,
-            cache_tables=cache_tables,
+    """Run compliance checks for selected conventions (e.g. CF, Ferret)."""
+    selected_conventions = _normalize_requested_conventions(conventions)
+
+    if "cf" in selected_conventions:
+        try:
+            issues = _run_cfchecker_on_dataset(
+                ds,
+                cf_version=cf_version,
+                standard_name_table_xml=standard_name_table_xml,
+                cf_area_types_xml=cf_area_types_xml,
+                cf_region_names_xml=cf_region_names_xml,
+                cache_tables=cache_tables,
+            )
+            augment_issues_with_standard_name_suggestions(
+                ds,
+                issues,
+                standard_name_table_xml,
+                domain=domain,
+            )
+        except Exception as exc:
+            if not fallback_to_heuristic:
+                raise
+            issues = _heuristic_check_dataset(ds)
+            issues["suggestions"] = {"variables": {}}
+            augment_issues_with_standard_name_suggestions(
+                ds,
+                issues,
+                standard_name_table_xml,
+                domain=domain,
+            )
+            issues["checker_error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            issues["notes"].append(
+                "cfchecker could not run; returned heuristic checks instead."
+            )
+    else:
+        issues = _empty_report(cf_version=cf_version)
+        issues["notes"].append(
+            "CF checks skipped because 'cf' convention was not selected."
         )
-        augment_issues_with_standard_name_suggestions(
-            ds,
-            issues,
-            standard_name_table_xml,
-            domain=domain,
-        )
-        if pretty_print:
-            print_pretty_report(issues)
-            return None
-        return issues
-    except Exception as exc:
-        if not fallback_to_heuristic:
-            raise
-        fallback = _heuristic_check_dataset(ds)
-        fallback["suggestions"] = {"variables": {}}
-        augment_issues_with_standard_name_suggestions(
-            ds,
-            fallback,
-            standard_name_table_xml,
-            domain=domain,
-        )
-        fallback["checker_error"] = {
-            "type": type(exc).__name__,
-            "message": str(exc),
-        }
-        fallback["notes"].append(
-            "cfchecker could not run; returned heuristic checks instead."
-        )
-        if pretty_print:
-            print_pretty_report(fallback)
-            return None
-        return fallback
+
+    issues["conventions_checked"] = list(selected_conventions)
+    _apply_selected_convention_checks(ds, issues, selected_conventions)
+    _recompute_counts(issues)
+
+    if pretty_print:
+        print_pretty_report(issues)
+        return None
+    return issues
 
 
 def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
@@ -494,8 +635,11 @@ def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
             out[dim].attrs = new_attrs
 
     # Ferret (and some other tools) can fail when coordinate variables include
-    # _FillValue encoding. Explicitly disable _FillValue for all coordinates.
+    # _FillValue. Explicitly disable it for all coordinates.
     for coord_name in out.coords:
+        coord_attrs = deepcopy(out[coord_name].attrs)
+        coord_attrs.pop("_FillValue", None)
+        out[coord_name].attrs = coord_attrs
         out[coord_name].encoding = {"_FillValue": None}
 
     return out

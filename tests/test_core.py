@@ -73,3 +73,8 @@ def test_translate_cfchecker_results_counts_and_scopes() -> None:
     assert translated["counts"] == {"fatal": 0, "error": 2, "warn": 2}
     assert "temp" in translated["variables"]
     assert "time" in translated["coordinates"]
+
+
+def test_normalize_requested_conventions_rejects_unknown() -> None:
+    with pytest.raises(ValueError, match="Unsupported conventions"):
+        core._normalize_requested_conventions("cf,not-real")

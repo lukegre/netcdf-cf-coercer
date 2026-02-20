@@ -30,13 +30,13 @@ def test_check_reports_missing_conventions_and_coord_attrs() -> None:
         assert "lon" in issues["coordinates"]
 
 
-def test_make_compliant_sets_expected_metadata_for_time_lat_lon() -> None:
+def test_comply_sets_expected_metadata_for_time_lat_lon() -> None:
     ds = xr.Dataset(
         data_vars={"temp": (("time", "lat", "lon"), np.ones((1, 1, 1)))},
         coords={"time": [0], "lat": [10.0], "lon": [20.0]},
     )
 
-    out = ds.cf.make_compliant()
+    out = ds.cf.comply()
 
     assert out.attrs["Conventions"] == "CF-1.12"
     assert out["time"].attrs["standard_name"] == "time"
@@ -56,7 +56,7 @@ def test_time_only_dataset_supported() -> None:
         coords={"time": [0, 1, 2]},
     )
 
-    out = ds.cf.make_compliant()
+    out = ds.cf.comply()
 
     assert out.attrs["Conventions"] == "CF-1.12"
     assert out["time"].attrs["standard_name"] == "time"
@@ -68,14 +68,14 @@ def test_lat_lon_only_dataset_supported() -> None:
         coords={"lat": [0.0, 1.0], "lon": [10.0, 11.0]},
     )
 
-    out = ds.cf.make_compliant()
+    out = ds.cf.comply()
 
     assert out.attrs["Conventions"] == "CF-1.12"
     assert out["lat"].attrs["standard_name"] == "latitude"
     assert out["lon"].attrs["standard_name"] == "longitude"
 
 
-def test_make_compliant_clears_coordinate_encodings() -> None:
+def test_comply_clears_coordinate_encodings() -> None:
     ds = xr.Dataset(
         data_vars={"temp": (("time", "lat", "lon"), np.ones((1, 1, 1)))},
         coords={"time": [0], "lat": [10.0], "lon": [20.0], "depth": ("time", [5.0])},
@@ -84,18 +84,20 @@ def test_make_compliant_clears_coordinate_encodings() -> None:
     ds["lat"].encoding = {"_FillValue": -9999.0}
     ds["lon"].encoding = {"_FillValue": -9999.0}
     ds["depth"].encoding = {"_FillValue": -9999.0}
+    ds["depth"].attrs["_FillValue"] = -9999.0
 
-    out = ds.cf.make_compliant()
+    out = ds.cf.comply()
 
     for coord_name in out.coords:
         assert out[coord_name].encoding.get("_FillValue") is None
+        assert "_FillValue" not in out[coord_name].attrs
 
 
 def test_unknown_dims_are_reported_but_not_forced() -> None:
     ds = xr.Dataset(data_vars={"v": (("station",), [1, 2, 3])})
 
     issues = ds.cf.check()
-    out = ds.cf.make_compliant()
+    out = ds.cf.comply()
 
     if issues["engine_status"] == "unavailable":
         assert any("station" in note for note in issues["notes"])
@@ -240,6 +242,66 @@ def test_pretty_print_prints_yaml_like_output(monkeypatch, capsys) -> None:
     assert "Engine status" in out
     assert "Check method" in out
     assert "Variable Findings" in out
+
+
+def test_ferret_convention_flags_coordinate_fillvalue() -> None:
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+    ds["time"].encoding = {"_FillValue": -9999}
+
+    issues = ds.cf.check(standard_name_table_xml=None)
+
+    findings = issues["coordinates"]["time"]
+    assert any(
+        item.get("item") == "coord_fillvalue_forbidden"
+        and item.get("convention") == "ferret"
+        for item in findings
+    )
+    assert "ferret" in issues["conventions_checked"]
+
+
+def test_can_disable_ferret_convention_checks() -> None:
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+    ds["time"].encoding = {"_FillValue": -9999}
+
+    issues = ds.cf.check(
+        standard_name_table_xml=None,
+        conventions="cf",
+    )
+
+    coord_items = issues["coordinates"].get("time", [])
+    assert not any(
+        item.get("item") == "coord_fillvalue_forbidden" for item in coord_items
+    )
+    assert issues["conventions_checked"] == ["cf"]
+
+
+def test_ferret_only_mode_skips_cfchecker(monkeypatch) -> None:
+    def _raise(*args, **kwargs):
+        raise AssertionError("cfchecker should not run for ferret-only checks")
+
+    monkeypatch.setattr(core, "_run_cfchecker_on_dataset", _raise)
+
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+    ds["time"].encoding = {"_FillValue": -9999}
+
+    issues = ds.cf.check(
+        conventions="ferret",
+        standard_name_table_xml=None,
+    )
+
+    assert issues["engine_status"] == "skipped"
+    assert issues["check_method"] == "conventions_only"
+    assert issues["conventions_checked"] == ["ferret"]
+    assert "time" in issues["coordinates"]
 
 
 def test_yaml_like_formatter_still_available() -> None:

@@ -29,6 +29,13 @@ You can also request a YAML-like text report printed to stdout:
 ds.cf.check(pretty_print=True)
 ```
 
+You can choose which conventions to check:
+
+```python
+ds.cf.check(conventions="cf,ferret")
+ds.cf.check(conventions="ferret")  # custom-only checks
+```
+
 `check()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
 in-memory NetCDF payload created from dataset metadata (no `.nc` file written to disk),
 and returns a dictionary of detected issues.
@@ -41,6 +48,7 @@ and returns a dictionary of detected issues.
 Notes:
 - `cfchecker` requires the system `udunits2` library via `cfunits`.
 - For large files, prefer opening with lazy chunks: `xr.open_dataset(path, chunks={})`.
+- The built-in `ferret` convention flags coordinate `_FillValue` usage as an error.
 - If `cfchecker` cannot run, `check()` falls back to heuristic checks and includes
   a `checker_error` field in the response.
 - You can bias standard-name suggestions by domain, e.g.

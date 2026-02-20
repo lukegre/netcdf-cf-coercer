@@ -37,6 +37,7 @@ class CFCoercerAccessor:
         cache_tables: bool = False,
         domain: str | None = None,
         fallback_to_heuristic: bool = True,
+        conventions: str | list[str] | tuple[str, ...] | None = None,
         pretty_print: bool = False,
     ) -> dict[str, Any] | None:
         """Check CF compliance for this dataset.
@@ -49,6 +50,8 @@ class CFCoercerAccessor:
         - Uses `cfchecker` against an in-memory NetCDF payload.
         - Falls back to heuristic checks when `cfchecker` cannot run and
           `fallback_to_heuristic=True`.
+        - Supports extra convention checks such as ``ferret`` via
+          `conventions="cf,ferret"` (or list/tuple).
         """
         return check_dataset_compliant(
             self._ds,
@@ -59,6 +62,7 @@ class CFCoercerAccessor:
             cache_tables=cache_tables,
             domain=domain,
             fallback_to_heuristic=fallback_to_heuristic,
+            conventions=conventions,
             pretty_print=pretty_print,
         )
 
@@ -66,3 +70,8 @@ class CFCoercerAccessor:
     def make_compliant(self) -> xr.Dataset:
         """Return a new dataset with safe CF-1.12 metadata fixes applied."""
         return make_dataset_compliant(self._ds)
+
+    @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
+    def comply(self) -> xr.Dataset:
+        """Alias for `make_compliant()`."""
+        return self.make_compliant()

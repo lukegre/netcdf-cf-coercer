@@ -22,11 +22,20 @@ def run_check(argv: list[str] | None = None) -> int:
         description="Run CF checks and print the same report as pretty_print=True.",
     )
     parser.add_argument("fname", type=_existing_file, help="Input NetCDF file")
+    parser.add_argument(
+        "--conventions",
+        default="cf,ferret",
+        help="Comma-separated conventions to check (default: cf,ferret).",
+    )
     args = parser.parse_args(argv)
 
     try:
         with xr.open_dataset(args.fname, chunks={}) as ds:
-            check_dataset_compliant(ds, pretty_print=True)
+            check_dataset_compliant(
+                ds,
+                conventions=args.conventions,
+                pretty_print=True,
+            )
     except Exception as exc:
         print(f"nc-cf-check: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

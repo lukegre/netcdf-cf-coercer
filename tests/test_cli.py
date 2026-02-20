@@ -11,7 +11,7 @@ def test_run_check_uses_pretty_print_mode(monkeypatch, tmp_path, capsys) -> None
         source
     )
 
-    seen: dict[str, bool] = {}
+    seen: dict[str, object] = {}
 
     def _fake_check(
         ds: xr.Dataset,
@@ -20,6 +20,7 @@ def test_run_check_uses_pretty_print_mode(monkeypatch, tmp_path, capsys) -> None
         **kwargs: object,
     ) -> None:
         seen["pretty_print"] = pretty_print
+        seen["conventions"] = kwargs.get("conventions")
         print("report-output")
 
     monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
@@ -40,6 +41,7 @@ def test_run_check_uses_pretty_print_mode(monkeypatch, tmp_path, capsys) -> None
     assert status == 0
     assert seen_open["kwargs"] == {"chunks": {}}
     assert seen["pretty_print"] is True
+    assert seen["conventions"] == "cf,ferret"
     assert "report-output" in out
 
 
@@ -84,3 +86,29 @@ def test_run_comply_opens_input_with_chunks(monkeypatch, tmp_path) -> None:
 
     assert status == 0
     assert seen_open["kwargs"] == {"chunks": {}}
+
+
+def test_run_check_forwards_custom_conventions(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "in.nc"
+    xr.Dataset(data_vars={"v": (("time",), [1.0])}, coords={"time": [0]}).to_netcdf(
+        source
+    )
+
+    seen: dict[str, object] = {}
+
+    def _fake_check(
+        ds: xr.Dataset,
+        *,
+        pretty_print: bool = False,
+        **kwargs: object,
+    ) -> None:
+        seen["pretty_print"] = pretty_print
+        seen["conventions"] = kwargs.get("conventions")
+
+    monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
+
+    status = cli.run_check([str(source), "--conventions", "ferret"])
+
+    assert status == 0
+    assert seen["pretty_print"] is True
+    assert seen["conventions"] == "ferret"

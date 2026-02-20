@@ -46,3 +46,28 @@ def test_print_pretty_report_falls_back_without_rich(monkeypatch, capsys) -> Non
 
     assert "cf_version: CF-1.12" in out
     assert "engine_status: ok" in out
+
+
+def test_print_pretty_report_shows_checked_conventions(capsys) -> None:
+    formatting.print_pretty_report(
+        {
+            "cf_version": "CF-1.12",
+            "engine": "cfchecker",
+            "engine_status": "ok",
+            "check_method": "cfchecker",
+            "conventions_checked": ["cf", "ferret"],
+            "coordinates": {
+                "time": [
+                    {
+                        "convention": "ferret",
+                        "severity": "ERROR",
+                        "message": "Coordinate 'time' has forbidden _FillValue.",
+                    }
+                ]
+            },
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "Conventions" in out
+    assert "ferret" in out
