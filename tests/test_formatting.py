@@ -19,6 +19,27 @@ def test_to_yaml_like_handles_scalars_and_empty_collections() -> None:
     assert "obj:\n  {}" in text
 
 
+def test_normalize_report_format_auto_uses_html_in_notebook(monkeypatch) -> None:
+    monkeypatch.setattr(formatting, "_running_in_notebook", lambda: True)
+    monkeypatch.setattr(formatting, "_running_in_cli", lambda: False)
+
+    assert formatting.normalize_report_format("auto") == "html"
+
+
+def test_normalize_report_format_auto_uses_tables_in_cli(monkeypatch) -> None:
+    monkeypatch.setattr(formatting, "_running_in_notebook", lambda: False)
+    monkeypatch.setattr(formatting, "_running_in_cli", lambda: True)
+
+    assert formatting.normalize_report_format("auto") == "tables"
+
+
+def test_normalize_report_format_auto_uses_python_otherwise(monkeypatch) -> None:
+    monkeypatch.setattr(formatting, "_running_in_notebook", lambda: False)
+    monkeypatch.setattr(formatting, "_running_in_cli", lambda: False)
+
+    assert formatting.normalize_report_format("auto") == "python"
+
+
 def test_print_pretty_report_handles_non_dict(capsys) -> None:
     formatting.print_pretty_report("plain text")
     out = capsys.readouterr().out
@@ -112,7 +133,8 @@ def test_print_pretty_ocean_report_shows_summary(capsys) -> None:
     )
     out = capsys.readouterr().out
 
-    assert "Ocean Coverage Report" in out
+    assert "OCEAN COVER REPORT" in out
+    assert "sst" in out
     assert "Check Summary" in out
     assert "edge_of_map" in out
     assert "Longitude" in out
@@ -135,9 +157,36 @@ def test_print_pretty_time_cover_report_shows_summary(capsys) -> None:
     )
     out = capsys.readouterr().out
 
-    assert "Time Coverage Report" in out
+    assert "TIME COVER REPORT" in out
+    assert "sst" in out
     assert "time_missing" in out
     assert "Missing Time Slice Ranges" in out
+
+
+def test_print_pretty_ocean_reports_prints_banner_once(capsys) -> None:
+    formatting.print_pretty_ocean_reports(
+        [
+            {
+                "variable": "sst",
+                "ok": True,
+                "grid": {},
+                "edge_of_map": {"status": "pass", "missing_longitude_count": 0},
+                "land_ocean_offset": {"status": "pass", "mismatch_count": 0},
+            },
+            {
+                "variable": "sss",
+                "ok": True,
+                "grid": {},
+                "edge_of_map": {"status": "pass", "missing_longitude_count": 0},
+                "land_ocean_offset": {"status": "pass", "mismatch_count": 0},
+            },
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert out.count("OCEAN COVER REPORT") == 1
+    assert "sst" in out
+    assert "sss" in out
 
 
 def test_print_pretty_report_summary_and_severity_priority(capsys) -> None:

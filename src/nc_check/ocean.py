@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +10,8 @@ from .formatting import (
     ReportFormat,
     maybe_display_html_report,
     normalize_report_format,
-    print_pretty_ocean_report,
-    print_pretty_time_cover_report,
+    print_pretty_ocean_reports,
+    print_pretty_time_cover_reports,
     render_pretty_ocean_report_html,
     render_pretty_ocean_reports_html,
     render_pretty_time_cover_report_html,
@@ -149,6 +150,63 @@ def _value_label(value: Any) -> str:
     if isinstance(value, np.datetime64):
         return np.datetime_as_string(value, unit="s")
     return str(value)
+
+
+def _first_non_null_value(values: np.ndarray[Any, Any]) -> Any | None:
+    for value in values.reshape(-1):
+        if value is None:
+            continue
+        if isinstance(value, np.datetime64) and np.isnat(value):
+            continue
+        if isinstance(value, (float, np.floating)) and np.isnan(value):
+            continue
+        return value
+    return None
+
+
+def _is_cftime_datetime(value: Any) -> bool:
+    module_name = getattr(value.__class__, "__module__", "")
+    return module_name.startswith("cftime")
+
+
+def _time_value_type(values: np.ndarray[Any, Any]) -> str:
+    dtype = values.dtype
+    if np.issubdtype(dtype, np.datetime64):
+        return "datetime64"
+    if np.issubdtype(dtype, np.floating):
+        return "float"
+    if np.issubdtype(dtype, np.integer):
+        return "int"
+    if np.issubdtype(dtype, np.str_) or np.issubdtype(dtype, np.bytes_):
+        return "string"
+
+    sample = _first_non_null_value(values)
+    if sample is None:
+        return str(dtype)
+    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
+        return "datetime"
+    if _is_cftime_datetime(sample):
+        return "cftime"
+    if isinstance(sample, (float, np.floating)):
+        return "float"
+    if isinstance(sample, (int, np.integer)) and not isinstance(
+        sample, (bool, np.bool_)
+    ):
+        return "int"
+    if isinstance(sample, (str, bytes, np.str_, np.bytes_)):
+        return "string"
+    return type(sample).__name__
+
+
+def _is_time_decoded_by_xarray(values: np.ndarray[Any, Any]) -> bool:
+    if np.issubdtype(values.dtype, np.datetime64):
+        return True
+    sample = _first_non_null_value(values)
+    if sample is None:
+        return False
+    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
+        return True
+    return _is_cftime_datetime(sample)
 
 
 def _range_records(
@@ -432,6 +490,76 @@ def _time_missing_check(da: xr.DataArray, *, time_dim: str | None) -> dict[str, 
     }
 
 
+def _time_format_check(da: xr.DataArray, *, time_dim: str | None) -> dict[str, Any]:
+    if time_dim is None:
+        return {
+            "enabled": True,
+            "status": "skipped_no_time",
+            "decoded_by_xarray": False,
+            "value_type": None,
+            "dtype": None,
+            "units": None,
+            "message": "No time dimension found on this variable.",
+            "suggestion": None,
+        }
+
+    time_coord = da.coords.get(time_dim)
+    if time_coord is None:
+        return {
+            "enabled": True,
+            "status": "fail",
+            "decoded_by_xarray": False,
+            "value_type": None,
+            "dtype": None,
+            "units": None,
+            "message": f"Time dimension '{time_dim}' has no coordinate values to validate.",
+            "suggestion": (
+                "Use a CF-standard time coordinate and unit, for example "
+                "'days since 1970-01-01 00:00:00' with an optional calendar."
+            ),
+        }
+
+    values = np.asarray(time_coord.values)
+    decoded = _is_time_decoded_by_xarray(values)
+    value_type = _time_value_type(values)
+
+    units: Any = time_coord.attrs.get("units")
+    if units is None:
+        units = time_coord.encoding.get("units")
+    units_text = None if units is None else str(units)
+
+    if decoded:
+        return {
+            "enabled": True,
+            "status": "pass",
+            "decoded_by_xarray": True,
+            "value_type": value_type,
+            "dtype": str(values.dtype),
+            "units": units_text,
+            "message": "Time coordinate is decoded to datetime values by xarray.",
+            "suggestion": None,
+        }
+
+    suggestion = (
+        "Use a CF-standard time format and unit (for example numeric offsets with "
+        "units like 'days since 1970-01-01 00:00:00') so xarray can decode time."
+    )
+    units_fragment = units_text if units_text else "missing"
+    return {
+        "enabled": True,
+        "status": "fail",
+        "decoded_by_xarray": False,
+        "value_type": value_type,
+        "dtype": str(values.dtype),
+        "units": units_text,
+        "message": (
+            f"Time coordinate '{time_dim}' is not decoded to datetime values "
+            f"(value_type={value_type}, dtype={values.dtype}, units={units_fragment})."
+        ),
+        "suggestion": suggestion,
+    }
+
+
 def _single_ocean_report(
     da: xr.DataArray,
     *,
@@ -512,11 +640,17 @@ def _single_time_cover_report(
     time_dim: str | None,
 ) -> dict[str, Any]:
     time_missing = _time_missing_check(da, time_dim=time_dim)
+    time_format = _time_format_check(da, time_dim=time_dim)
+    statuses = [
+        str(time_missing.get("status")).lower(),
+        str(time_format.get("status")).lower(),
+    ]
     return {
         "variable": str(da.name),
         "time_dim": time_dim,
         "time_missing": time_missing,
-        "ok": str(time_missing.get("status")) in {"pass", "skipped_no_time", "skipped"},
+        "time_format": time_format,
+        "ok": not any(status in {"fail", "error"} for status in statuses),
     }
 
 
@@ -529,7 +663,7 @@ def check_ocean_cover(
     time_name: str | None = "time",
     check_edge_of_map: bool = True,
     check_land_ocean_offset: bool = True,
-    report_format: ReportFormat = "tables",
+    report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
     check_edge_sliver: bool | None = None,
     check_time_missing: bool | None = None,
@@ -573,7 +707,7 @@ def check_ocean_cover(
     if len(reports) == 1:
         report = next(iter(reports.values()))
         if resolved_format == "tables":
-            print_pretty_ocean_report(report)
+            print_pretty_ocean_reports([report])
             return None
         if resolved_format == "html":
             html_report = render_pretty_ocean_report_html(report)
@@ -590,8 +724,7 @@ def check_ocean_cover(
         "ok": all(bool(per_var.get("ok")) for per_var in reports.values()),
     }
     if resolved_format == "tables":
-        for per_var_report in reports.values():
-            print_pretty_ocean_report(per_var_report)
+        print_pretty_ocean_reports(list(reports.values()))
         return None
     if resolved_format == "html":
         html_report = render_pretty_ocean_reports_html(list(reports.values()))
@@ -606,7 +739,7 @@ def check_time_cover(
     *,
     var_name: str | None = None,
     time_name: str | None = "time",
-    report_format: ReportFormat = "tables",
+    report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
 ) -> dict[str, Any] | str | None:
     """Run time-coverage checks and report missing time-slice ranges."""
@@ -622,7 +755,7 @@ def check_time_cover(
     if len(reports) == 1:
         report = next(iter(reports.values()))
         if resolved_format == "tables":
-            print_pretty_time_cover_report(report)
+            print_pretty_time_cover_reports([report])
             return None
         if resolved_format == "html":
             html_report = render_pretty_time_cover_report_html(report)
@@ -639,8 +772,7 @@ def check_time_cover(
         "ok": all(bool(per_var.get("ok")) for per_var in reports.values()),
     }
     if resolved_format == "tables":
-        for per_var_report in reports.values():
-            print_pretty_time_cover_report(per_var_report)
+        print_pretty_time_cover_reports(list(reports.values()))
         return None
     if resolved_format == "html":
         html_report = render_pretty_time_cover_reports_html(list(reports.values()))

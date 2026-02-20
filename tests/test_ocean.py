@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import xarray as xr
 
 import nc_check  # noqa: F401
@@ -94,6 +95,58 @@ def test_time_cover_reports_ranges() -> None:
     assert report["time_missing"]["missing_slice_ranges"] == [
         {"start_index": 1, "end_index": 2, "start": "1", "end": "2"}
     ]
+    assert report["time_format"]["status"] == "fail"
+    assert report["time_format"]["value_type"] == "int"
+    assert "CF-standard time format and unit" in str(
+        report["time_format"]["suggestion"]
+    )
+
+
+def test_time_cover_accepts_xarray_decoded_time_coordinates() -> None:
+    lon = np.arange(0.0, 360.0, 60.0)
+    lat = np.array([-45.0, 45.0])
+    time = np.array(["2024-01-01", "2024-01-02"], dtype="datetime64[ns]")
+    data = np.ones((time.size, lat.size, lon.size), dtype=float)
+
+    ds = xr.Dataset(
+        data_vars={"sst": (("time", "lat", "lon"), data)},
+        coords={"time": time, "lat": lat, "lon": lon},
+    )
+
+    report = ds.check.time_cover(var_name="sst", report_format="python")
+
+    assert report["time_missing"]["status"] == "pass"
+    assert report["time_format"]["status"] == "pass"
+    assert report["time_format"]["decoded_by_xarray"] is True
+    assert report["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("time_values", "expected_value_type"),
+    [
+        (np.array([0.0, 1.0], dtype=float), "float"),
+        (np.array(["2024-01-01", "2024-01-02"], dtype=str), "string"),
+    ],
+)
+def test_time_cover_reports_non_cf_time_types(
+    time_values: np.ndarray, expected_value_type: str
+) -> None:
+    lat = np.array([-45.0, 45.0])
+    lon = np.arange(0.0, 360.0, 60.0)
+    data = np.ones((time_values.size, lat.size, lon.size), dtype=float)
+
+    ds = xr.Dataset(
+        data_vars={"sst": (("time", "lat", "lon"), data)},
+        coords={"time": time_values, "lat": lat, "lon": lon},
+    )
+
+    report = ds.check.time_cover(var_name="sst", report_format="python")
+
+    assert report["time_format"]["status"] == "fail"
+    assert report["time_format"]["value_type"] == expected_value_type
+    assert "CF-standard time format and unit" in str(
+        report["time_format"]["suggestion"]
+    )
 
 
 def test_ocean_cover_without_var_name_checks_all_eligible_variables() -> None:
@@ -201,7 +254,11 @@ def test_ocean_cover_html_report_has_collapsible_sections_and_modern_style() -> 
 def test_time_cover_html_report_has_collapsible_sections_and_modern_style() -> None:
     ds = xr.Dataset(
         data_vars={"sst": (("time", "lat", "lon"), np.ones((2, 2, 3)))},
-        coords={"time": [0, 1], "lat": [-1.0, 1.0], "lon": [0.0, 120.0, 240.0]},
+        coords={
+            "time": np.array(["2024-01-01", "2024-01-02"], dtype="datetime64[ns]"),
+            "lat": [-1.0, 1.0],
+            "lon": [0.0, 120.0, 240.0],
+        },
     )
 
     html = ds.check.time_cover(var_name="sst", report_format="html")
@@ -218,7 +275,11 @@ def test_time_cover_html_report_has_collapsible_sections_and_modern_style() -> N
 def test_time_cover_html_report_can_be_saved(tmp_path) -> None:
     ds = xr.Dataset(
         data_vars={"sst": (("time", "lat", "lon"), np.ones((2, 2, 3)))},
-        coords={"time": [0, 1], "lat": [-1.0, 1.0], "lon": [0.0, 120.0, 240.0]},
+        coords={
+            "time": np.array(["2024-01-01", "2024-01-02"], dtype="datetime64[ns]"),
+            "lat": [-1.0, 1.0],
+            "lon": [0.0, 120.0, 240.0],
+        },
     )
     report_file = tmp_path / "time-cover.html"
 
@@ -256,8 +317,10 @@ def test_ocean_multi_variable_html_uses_collapsible_variable_sections() -> None:
     )
 
     assert isinstance(html, str)
+    assert "Top Summary" in html
     assert "variable-report" in html
     assert html.count("<details class='report-section variable-report'") == 2
+    assert "<details class='report-section variable-report' open>" not in html
     assert "summary-table" in html
     assert "kv-grid" not in html
 
@@ -277,7 +340,9 @@ def test_time_multi_variable_html_uses_collapsible_variable_sections() -> None:
     html = ds.check.time_cover(report_format="html")
 
     assert isinstance(html, str)
+    assert "Top Summary" in html
     assert "variable-report" in html
     assert html.count("<details class='report-section variable-report'") == 2
+    assert "<details class='report-section variable-report' open>" not in html
     assert "summary-table" in html
     assert "kv-grid" not in html

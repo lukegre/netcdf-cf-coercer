@@ -34,6 +34,47 @@ def test_make_compliant_casts_string_lat_lon_coords_to_float() -> None:
     assert out["lon"].attrs["units"] == "degrees_east"
 
 
+def test_make_compliant_renames_badly_cased_variable_attrs() -> None:
+    ds = xr.Dataset(
+        data_vars={
+            "temp": (
+                ("time",),
+                [290.0],
+                {
+                    "Units": "K",
+                    "Standard_Name": "air_temperature",
+                    "Long_Name": "air temperature",
+                },
+            )
+        },
+        coords={"time": [0]},
+    )
+
+    out = core.make_dataset_compliant(ds)
+
+    assert out["temp"].attrs["units"] == "K"
+    assert out["temp"].attrs["standard_name"] == "air_temperature"
+    assert out["temp"].attrs["long_name"] == "air temperature"
+    assert "Units" not in out["temp"].attrs
+    assert "Standard_Name" not in out["temp"].attrs
+    assert "Long_Name" not in out["temp"].attrs
+
+
+def test_make_compliant_renamed_coord_attrs_enable_axis_inference() -> None:
+    ds = xr.Dataset(
+        data_vars={"field": (("xcoord",), [1.0])},
+        coords={"xcoord": ("xcoord", [5.0], {"Standard_Name": "longitude"})},
+    )
+
+    out = core.make_dataset_compliant(ds)
+
+    assert out["xcoord"].attrs["standard_name"] == "longitude"
+    assert out["xcoord"].attrs["long_name"] == "longitude"
+    assert out["xcoord"].attrs["units"] == "degrees_east"
+    assert out["xcoord"].attrs["axis"] == "X"
+    assert "Standard_Name" not in out["xcoord"].attrs
+
+
 def test_check_dataset_compliant_raises_if_no_fallback(monkeypatch) -> None:
     def _raise(*args, **kwargs):
         raise RuntimeError("checker failed")
@@ -103,3 +144,80 @@ def test_check_dataset_compliant_rejects_html_file_without_html_format() -> None
             report_format="python",
             report_html_file="report.html",
         )
+
+
+def _empty_cfchecker_report() -> dict[str, object]:
+    return {
+        "cf_version": "CF-1.12",
+        "engine": "cfchecker",
+        "engine_status": "ok",
+        "check_method": "cfchecker",
+        "global": [],
+        "coordinates": {},
+        "variables": {},
+        "suggestions": {"variables": {}},
+        "notes": [],
+        "counts": {"fatal": 0, "error": 0, "warn": 0},
+    }
+
+
+def test_check_dataset_compliant_flags_wrong_case_variable_units(monkeypatch) -> None:
+    monkeypatch.setattr(
+        core, "_run_cfchecker_on_dataset", lambda *a, **k: _empty_cfchecker_report()
+    )
+
+    ds = xr.Dataset(
+        data_vars={
+            "temp": (
+                ("time",),
+                [290.0],
+                {"Units": "K", "standard_name": "air_temperature"},
+            )
+        },
+        coords={"time": [0]},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    findings = issues["variables"]["temp"]
+    assert any(
+        isinstance(item, dict)
+        and item.get("item") == "attr_case_mismatch"
+        and item.get("current") == "Units"
+        and item.get("expected") == "units"
+        for item in findings
+    )
+    assert issues["counts"]["warn"] >= 1
+
+
+def test_check_dataset_compliant_flags_wrong_case_coordinate_units(monkeypatch) -> None:
+    monkeypatch.setattr(
+        core, "_run_cfchecker_on_dataset", lambda *a, **k: _empty_cfchecker_report()
+    )
+
+    ds = xr.Dataset(
+        data_vars={"v": (("time",), [1.0])},
+        coords={"time": ("time", [0.0], {"Units": "days since 1970-01-01"})},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    findings = issues["coordinates"]["time"]
+    assert any(
+        isinstance(item, dict)
+        and item.get("item") == "attr_case_mismatch"
+        and item.get("current") == "Units"
+        and item.get("expected") == "units"
+        for item in findings
+    )
+    assert issues["counts"]["warn"] >= 1

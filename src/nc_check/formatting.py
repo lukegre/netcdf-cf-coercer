@@ -2,17 +2,20 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+import sys
 from typing import Any
 from typing import Literal
 
 from .report_templates import render_report_document
 
-ReportFormat = Literal["python", "tables", "html"]
+ResolvedReportFormat = Literal["python", "tables", "html"]
+ReportFormat = Literal["auto", "python", "tables", "html"]
 _RICH_BORDER_STYLE = "white"
 _RICH_TITLE_STYLE = "bold white"
 _RICH_HEADER_STYLE = "bold white"
 _RICH_LABEL_STYLE = "bold white"
 _RICH_TEXT_STYLE = "white"
+_RICH_TABLE_BORDER_STYLE = "bright_black"
 
 
 def _stringify(value: Any) -> str:
@@ -106,9 +109,47 @@ def _count_to_int(value: Any) -> int:
         return 0
 
 
-def normalize_report_format(report_format: str) -> ReportFormat:
+def _running_in_notebook() -> bool:
+    try:
+        from IPython import get_ipython
+    except Exception:
+        return False
+
+    shell = get_ipython()
+    if shell is None:
+        return False
+
+    shell_name = shell.__class__.__name__
+    if shell_name == "ZMQInteractiveShell":
+        return True
+    if shell_name == "TerminalInteractiveShell":
+        return False
+    return bool(getattr(shell, "kernel", None))
+
+
+def _running_in_cli() -> bool:
+    stdout = getattr(sys, "stdout", None)
+    if stdout is None:
+        return False
+    try:
+        return bool(stdout.isatty())
+    except Exception:
+        return False
+
+
+def _resolve_auto_report_format() -> ResolvedReportFormat:
+    if _running_in_notebook():
+        return "html"
+    if _running_in_cli():
+        return "tables"
+    return "python"
+
+
+def normalize_report_format(report_format: str) -> ResolvedReportFormat:
     normalized = report_format.strip().lower()
-    allowed = {"python", "tables", "html"}
+    if normalized == "auto":
+        return _resolve_auto_report_format()
+    allowed = {"auto", "python", "tables", "html"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
         raise ValueError(
@@ -300,7 +341,9 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
     from rich.table import Table
     from rich.text import Text
 
-    title = Text("Ocean Coverage Report", style=_RICH_TITLE_STYLE)
+    variable_name = report.get("variable")
+    section_title = str(variable_name) if variable_name is not None else "Variable"
+    title = Text(section_title, style=_RICH_TITLE_STYLE)
     console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
 
     edge = (
@@ -365,7 +408,14 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
     )
     summary_head.add_row("Failing checks", str(failing_checks))
     summary_head.add_row("Warnings/skips", str(warning_checks))
-    console.print(Panel(summary_head, title="Summary", border_style=_RICH_BORDER_STYLE))
+    console.print(
+        Panel(
+            summary_head,
+            title="Summary",
+            border_style=_RICH_BORDER_STYLE,
+            expand=False,
+        )
+    )
 
     grid = report.get("grid") if isinstance(report.get("grid"), dict) else {}
     meta = Table(show_header=False, box=None, pad_edge=False)
@@ -396,6 +446,7 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
         title="Check Summary",
         title_style=_RICH_TITLE_STYLE,
         header_style=_RICH_HEADER_STYLE,
+        border_style=_RICH_TABLE_BORDER_STYLE,
     )
     summary.add_column("Check", style=_RICH_TEXT_STYLE, justify="left")
     summary.add_column("Status", style=_RICH_TEXT_STYLE, justify="left")
@@ -498,7 +549,9 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
     from rich.table import Table
     from rich.text import Text
 
-    title = Text("Time Coverage Report", style=_RICH_TITLE_STYLE)
+    variable_name = report.get("variable")
+    section_title = str(variable_name) if variable_name is not None else "Variable"
+    title = Text(section_title, style=_RICH_TITLE_STYLE)
     console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
 
     time_missing = (
@@ -506,8 +559,35 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
         if isinstance(report.get("time_missing"), dict)
         else {}
     )
-    status = _stringify(time_missing.get("status"))
-    status_kind = _status_kind(status)
+    time_format = (
+        report.get("time_format") if isinstance(report.get("time_format"), dict) else {}
+    )
+
+    summary_rows: list[tuple[str, Any, str]] = [
+        (
+            "time_missing",
+            time_missing.get("status"),
+            f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
+        )
+    ]
+    if time_format:
+        summary_rows.append(
+            (
+                "time_format",
+                time_format.get("status"),
+                (
+                    f"value_type={_stringify(time_format.get('value_type'))} "
+                    f"units={_stringify(time_format.get('units'))}"
+                ),
+            )
+        )
+    failing_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "warn"
+    )
+
     summary_head = Table(show_header=False, box=None, pad_edge=False)
     summary_head.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
     summary_head.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
@@ -518,30 +598,46 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
             style=_status_style("pass" if bool(report.get("ok")) else "fail"),
         ),
     )
-    summary_head.add_row("Failing checks", "1" if status_kind == "fail" else "0")
-    summary_head.add_row("Warnings/skips", "1" if status_kind == "warn" else "0")
-    console.print(Panel(summary_head, title="Summary", border_style=_RICH_BORDER_STYLE))
+    summary_head.add_row("Failing checks", _stringify(failing_checks))
+    summary_head.add_row("Warnings/skips", _stringify(warning_checks))
+    console.print(
+        Panel(
+            summary_head,
+            title="Summary",
+            border_style=_RICH_BORDER_STYLE,
+            expand=False,
+        )
+    )
 
     meta = Table(show_header=False, box=None, pad_edge=False)
     meta.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
     meta.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
     meta.add_row("Variable", _stringify(report.get("variable")))
     meta.add_row("Time dim", _stringify(report.get("time_dim")))
+    if time_format:
+        meta.add_row("Time dtype", _stringify(time_format.get("dtype")))
+        meta.add_row("Time units", _stringify(time_format.get("units")))
+        meta.add_row(
+            "Decoded by xarray", _stringify(time_format.get("decoded_by_xarray"))
+        )
     console.print(meta)
 
     summary = Table(
         title="Check Summary",
         title_style=_RICH_TITLE_STYLE,
         header_style=_RICH_HEADER_STYLE,
+        border_style=_RICH_TABLE_BORDER_STYLE,
     )
     summary.add_column("Check", style=_RICH_TEXT_STYLE, justify="left")
     summary.add_column("Status", style=_RICH_TEXT_STYLE, justify="left")
     summary.add_column("Detail", style=_RICH_TEXT_STYLE, justify="left")
-    summary.add_row(
-        "time_missing",
-        Text(status, style=_status_style(status)),
-        f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
-    )
+    for check_name, status, detail in summary_rows:
+        status_text = _stringify(status)
+        summary.add_row(
+            _stringify(check_name),
+            Text(status_text, style=_status_style(status_text)),
+            _stringify(detail),
+        )
     console.print(summary)
 
     ranges = time_missing.get("missing_slice_ranges")
@@ -566,6 +662,23 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
             )
         console.print(table)
 
+    if time_format:
+        message = time_format.get("message")
+        suggestion = time_format.get("suggestion")
+        if message is not None or suggestion is not None:
+            table = Table(
+                title="Time Format Guidance",
+                title_style=_RICH_TITLE_STYLE,
+                header_style=_RICH_HEADER_STYLE,
+            )
+            table.add_column("Field", style=_RICH_TEXT_STYLE, justify="left")
+            table.add_column("Value", style=_RICH_TEXT_STYLE, justify="left")
+            if message is not None:
+                table.add_row("message", _stringify(message))
+            if suggestion is not None:
+                table.add_row("suggestion", _stringify(suggestion))
+            console.print(table)
+
 
 def print_pretty_report(report: Any) -> None:
     """Print a human-readable compliance report with rich highlighting when available."""
@@ -588,13 +701,33 @@ def print_pretty_ocean_report(report: Any) -> None:
         print(_stringify(report))
         return
 
+    print_pretty_ocean_reports([report])
+
+
+def print_pretty_ocean_reports(reports: list[dict[str, Any]]) -> None:
+    """Print one or more ocean coverage reports under a shared top-level banner."""
+    if not reports:
+        return
+
     try:
         from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
 
         console = Console()
-        _render_ocean_report_with_rich(console, report)
+        console.print(
+            Panel(
+                Text("OCEAN COVER REPORT", style=_RICH_TITLE_STYLE),
+                border_style=_RICH_BORDER_STYLE,
+            )
+        )
+        for index, report in enumerate(reports):
+            if index > 0:
+                console.print()
+            _render_ocean_report_with_rich(console, report)
     except Exception:
-        print(to_yaml_like(report))
+        for report in reports:
+            print(to_yaml_like(report))
 
 
 def print_pretty_time_cover_report(report: Any) -> None:
@@ -603,11 +736,111 @@ def print_pretty_time_cover_report(report: Any) -> None:
         print(_stringify(report))
         return
 
+    print_pretty_time_cover_reports([report])
+
+
+def print_pretty_time_cover_reports(reports: list[dict[str, Any]]) -> None:
+    """Print one or more time-coverage reports under a shared top-level banner."""
+    if not reports:
+        return
+
     try:
         from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
 
         console = Console()
-        _render_time_cover_report_with_rich(console, report)
+        console.print(
+            Panel(
+                Text("TIME COVER REPORT", style=_RICH_TITLE_STYLE),
+                border_style=_RICH_BORDER_STYLE,
+            )
+        )
+        for index, report in enumerate(reports):
+            if index > 0:
+                console.print()
+            _render_time_cover_report_with_rich(console, report)
+    except Exception:
+        for report in reports:
+            print(to_yaml_like(report))
+
+
+def print_pretty_full_report(report: Any) -> None:
+    """Print a combined report summary, then each selected report."""
+    if not isinstance(report, dict):
+        print(_stringify(report))
+        return
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        console = Console()
+        title = Text("Full Dataset Check Report", style=_RICH_TITLE_STYLE)
+        console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
+
+        summary = (
+            report.get("summary") if isinstance(report.get("summary"), dict) else {}
+        )
+        summary_table = Table(show_header=False, box=None, pad_edge=False)
+        summary_table.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+        summary_table.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
+        summary_table.add_row(
+            "Overall",
+            Text(
+                "PASSED" if bool(summary.get("overall_ok")) else "FAILED",
+                style=_status_style(summary.get("overall_status")),
+            ),
+        )
+        summary_table.add_row("Checks run", _stringify(summary.get("checks_run")))
+        summary_table.add_row(
+            "Failing checks", _stringify(summary.get("failing_checks"))
+        )
+        summary_table.add_row(
+            "Warnings/skips", _stringify(summary.get("warnings_or_skips"))
+        )
+        console.print(
+            Panel(summary_table, title="Summary", border_style=_RICH_BORDER_STYLE)
+        )
+
+        checks = report.get("check_summary")
+        if isinstance(checks, list) and checks:
+            checks_table = Table(
+                title="Check Summary",
+                title_style=_RICH_TITLE_STYLE,
+                header_style=_RICH_HEADER_STYLE,
+                border_style=_RICH_TABLE_BORDER_STYLE,
+            )
+            checks_table.add_column("Check", style=_RICH_TEXT_STYLE, justify="left")
+            checks_table.add_column("Status", style=_RICH_TEXT_STYLE, justify="left")
+            checks_table.add_column("Detail", style=_RICH_TEXT_STYLE, justify="left")
+            for item in checks:
+                if not isinstance(item, dict):
+                    continue
+                checks_table.add_row(
+                    _stringify(item.get("check")),
+                    Text(
+                        _stringify(item.get("status")).upper(),
+                        style=_status_style(item.get("status")),
+                    ),
+                    _stringify(item.get("detail")),
+                )
+            console.print(checks_table)
+
+        reports = (
+            report.get("reports") if isinstance(report.get("reports"), dict) else {}
+        )
+        compliance = reports.get("compliance")
+        if isinstance(compliance, dict):
+            _render_cf_report_with_rich(console, compliance)
+        ocean_cover = reports.get("ocean_cover")
+        if isinstance(ocean_cover, dict):
+            _render_ocean_report_with_rich(console, ocean_cover)
+        time_cover = reports.get("time_cover")
+        if isinstance(time_cover, dict):
+            _render_time_cover_report_with_rich(console, time_cover)
     except Exception:
         print(to_yaml_like(report))
 
@@ -1202,14 +1435,24 @@ def _time_cover_report_sections(report: dict[str, Any]) -> str:
         if isinstance(report.get("time_missing"), dict)
         else {}
     )
-
-    meta = _html_summary_table(
-        [
-            ("Variable", report.get("variable")),
-            ("Time dim", report.get("time_dim")),
-            ("Overall OK", report.get("ok")),
-        ]
+    time_format = (
+        report.get("time_format") if isinstance(report.get("time_format"), dict) else {}
     )
+
+    meta_rows: list[tuple[str, Any]] = [
+        ("Variable", report.get("variable")),
+        ("Time dim", report.get("time_dim")),
+        ("Overall OK", report.get("ok")),
+    ]
+    if time_format:
+        meta_rows.extend(
+            [
+                ("Time dtype", time_format.get("dtype")),
+                ("Time units", time_format.get("units")),
+                ("Decoded by xarray", time_format.get("decoded_by_xarray")),
+            ]
+        )
+    meta = _html_summary_table(meta_rows)
 
     summary_rows: list[tuple[str, Any, str]] = [
         (
@@ -1218,19 +1461,35 @@ def _time_cover_report_sections(report: dict[str, Any]) -> str:
             f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
         )
     ]
-    status_kind = _status_kind(time_missing.get("status"))
+    if time_format:
+        summary_rows.append(
+            (
+                "time_format",
+                time_format.get("status"),
+                (
+                    f"value_type={_stringify(time_format.get('value_type'))} "
+                    f"units={_stringify(time_format.get('units'))}"
+                ),
+            )
+        )
+    failing_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "warn"
+    )
     stats = _html_stat_strip(
         [
             ("Checks run", len(summary_rows), None),
             (
                 "Failing checks",
-                1 if status_kind == "fail" else 0,
-                "fail" if status_kind == "fail" else None,
+                failing_checks,
+                "fail" if failing_checks > 0 else None,
             ),
             (
                 "Warnings/skips",
-                1 if status_kind == "warn" else 0,
-                "warn" if status_kind == "warn" else None,
+                warning_checks,
+                "warn" if warning_checks > 0 else None,
             ),
             (
                 "Overall",
@@ -1265,6 +1524,20 @@ def _time_cover_report_sections(report: dict[str, Any]) -> str:
             )
         )
 
+    guidance_rows = []
+    if time_format:
+        if time_format.get("message") is not None:
+            guidance_rows.append(("message", time_format.get("message")))
+        if time_format.get("suggestion") is not None:
+            guidance_rows.append(("suggestion", time_format.get("suggestion")))
+    if guidance_rows:
+        sections.append(
+            _html_static_section(
+                "Time Format Guidance",
+                _html_summary_table(guidance_rows),
+            )
+        )
+
     return (
         stats
         + meta
@@ -1287,17 +1560,92 @@ def render_pretty_ocean_reports_html(reports: list[dict[str, Any]]) -> str:
     if not reports:
         return _yaml_html_fallback({})
     blocks: list[str] = []
-    for index, report in enumerate(reports, start=1):
+    for report in reports:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(report.get("variable")),
                 status=report.get("ok"),
                 body_html=_ocean_report_sections(report),
-                open_by_default=(index == 1),
+                open_by_default=False,
             )
         )
-    intro = f"<p class='report-subtitle mb-0'>Variables checked: {len(reports)}</p>"
-    return render_report_document("Ocean Coverage Report", intro, "".join(blocks))
+    intro = "<p class='report-subtitle mb-0'>Variables checked across all eligible variables.</p>"
+    return render_report_document(
+        "Ocean Coverage Report",
+        intro,
+        _ocean_reports_summary_sections(reports) + "".join(blocks),
+    )
+
+
+def _ocean_reports_summary_sections(reports: list[dict[str, Any]]) -> str:
+    summary_rows: list[tuple[str, Any, str]] = []
+    for report in reports:
+        edge = (
+            report.get("edge_of_map")
+            if isinstance(report.get("edge_of_map"), dict)
+            else {}
+        )
+        offset = (
+            report.get("land_ocean_offset")
+            if isinstance(report.get("land_ocean_offset"), dict)
+            else {}
+        )
+        time_missing = (
+            report.get("time_missing")
+            if isinstance(report.get("time_missing"), dict)
+            else {}
+        )
+        detail_parts = [
+            f"missing_longitudes={_stringify(edge.get('missing_longitude_count', 0))}",
+            f"mismatches={_stringify(offset.get('mismatch_count', 0))}",
+        ]
+        if time_missing:
+            detail_parts.append(
+                f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}"
+            )
+        summary_rows.append(
+            (
+                _stringify(report.get("variable")),
+                report.get("ok"),
+                " ".join(detail_parts),
+            )
+        )
+
+    failing_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "warn"
+    )
+    overall_ok = all(bool(report.get("ok")) for report in reports)
+
+    stats = _html_stat_strip(
+        [
+            ("Variables checked", len(reports), None),
+            (
+                "Failing variables",
+                failing_checks,
+                "fail" if failing_checks > 0 else None,
+            ),
+            ("Warnings/skips", warning_checks, "warn" if warning_checks > 0 else None),
+            (
+                "Overall",
+                "PASSED" if overall_ok else "FAILED",
+                _status_kind(overall_ok),
+            ),
+        ]
+    )
+    meta = _html_summary_table(
+        [
+            ("Variables checked", len(reports)),
+            ("Overall OK", overall_ok),
+        ]
+    )
+    summary = _html_static_section(
+        "Top Summary",
+        _html_check_summary_table(summary_rows),
+    )
+    return stats + meta + summary
 
 
 def render_pretty_time_cover_report_html(report: Any) -> str:
@@ -1309,18 +1657,263 @@ def render_pretty_time_cover_report_html(report: Any) -> str:
     )
 
 
+def _time_cover_reports_summary_sections(reports: list[dict[str, Any]]) -> str:
+    summary_rows: list[tuple[str, Any, str]] = []
+    for report in reports:
+        time_missing = (
+            report.get("time_missing")
+            if isinstance(report.get("time_missing"), dict)
+            else {}
+        )
+        time_format = (
+            report.get("time_format")
+            if isinstance(report.get("time_format"), dict)
+            else {}
+        )
+        detail_parts = [
+            f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}"
+        ]
+        if time_format:
+            detail_parts.append(f"time_format={_stringify(time_format.get('status'))}")
+        summary_rows.append(
+            (
+                _stringify(report.get("variable")),
+                report.get("ok"),
+                " ".join(detail_parts),
+            )
+        )
+
+    failing_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "warn"
+    )
+    overall_ok = all(bool(report.get("ok")) for report in reports)
+
+    stats = _html_stat_strip(
+        [
+            ("Variables checked", len(reports), None),
+            (
+                "Failing variables",
+                failing_checks,
+                "fail" if failing_checks > 0 else None,
+            ),
+            ("Warnings/skips", warning_checks, "warn" if warning_checks > 0 else None),
+            (
+                "Overall",
+                "PASSED" if overall_ok else "FAILED",
+                _status_kind(overall_ok),
+            ),
+        ]
+    )
+    meta = _html_summary_table(
+        [
+            ("Variables checked", len(reports)),
+            ("Overall OK", overall_ok),
+        ]
+    )
+    summary = _html_static_section(
+        "Top Summary",
+        _html_check_summary_table(summary_rows),
+    )
+    return stats + meta + summary
+
+
 def render_pretty_time_cover_reports_html(reports: list[dict[str, Any]]) -> str:
     if not reports:
         return _yaml_html_fallback({})
     blocks: list[str] = []
-    for index, report in enumerate(reports, start=1):
+    for report in reports:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(report.get("variable")),
                 status=report.get("ok"),
                 body_html=_time_cover_report_sections(report),
-                open_by_default=(index == 1),
+                open_by_default=False,
             )
         )
-    intro = f"<p class='report-subtitle mb-0'>Variables checked: {len(reports)}</p>"
-    return render_report_document("Time Coverage Report", intro, "".join(blocks))
+    intro = "<p class='report-subtitle mb-0'>Variables checked across all data variables.</p>"
+    return render_report_document(
+        "Time Coverage Report",
+        intro,
+        _time_cover_reports_summary_sections(reports) + "".join(blocks),
+    )
+
+
+def _multi_variable_ocean_body(report: dict[str, Any]) -> str:
+    reports = report.get("reports")
+    if not isinstance(reports, dict):
+        return _ocean_report_sections(report)
+    report_list = [per_var for per_var in reports.values() if isinstance(per_var, dict)]
+    if not report_list:
+        return _ocean_report_sections(report)
+    intro = _ocean_reports_summary_sections(report_list)
+    blocks: list[str] = []
+    for per_var in reports.values():
+        if not isinstance(per_var, dict):
+            continue
+        blocks.append(
+            _html_variable_section(
+                variable_name=_stringify(per_var.get("variable")),
+                status=per_var.get("ok"),
+                body_html=_ocean_report_sections(per_var),
+                open_by_default=False,
+            )
+        )
+    return intro + "".join(blocks)
+
+
+def _multi_variable_time_cover_body(report: dict[str, Any]) -> str:
+    reports = report.get("reports")
+    if not isinstance(reports, dict):
+        return _time_cover_report_sections(report)
+    report_list = [per_var for per_var in reports.values() if isinstance(per_var, dict)]
+    if not report_list:
+        return _time_cover_report_sections(report)
+    intro = _time_cover_reports_summary_sections(report_list)
+    blocks: list[str] = []
+    for per_var in reports.values():
+        if not isinstance(per_var, dict):
+            continue
+        blocks.append(
+            _html_variable_section(
+                variable_name=_stringify(per_var.get("variable")),
+                status=per_var.get("ok"),
+                body_html=_time_cover_report_sections(per_var),
+                open_by_default=False,
+            )
+        )
+    return intro + "".join(blocks)
+
+
+def _full_report_sections(report: dict[str, Any]) -> str:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    check_summary = report.get("check_summary")
+    summary_rows: list[tuple[str, Any, str]] = []
+    if isinstance(check_summary, list):
+        for item in check_summary:
+            if not isinstance(item, dict):
+                continue
+            summary_rows.append(
+                (
+                    _stringify(item.get("check")),
+                    item.get("status"),
+                    _stringify(item.get("detail")),
+                )
+            )
+
+    enabled = report.get("checks_enabled")
+    enabled_checks = (
+        ", ".join(
+            check_name for check_name, is_enabled in enabled.items() if bool(is_enabled)
+        )
+        if isinstance(enabled, dict)
+        else ""
+    )
+
+    stats = _html_stat_strip(
+        [
+            ("Checks run", summary.get("checks_run"), None),
+            (
+                "Failing checks",
+                summary.get("failing_checks"),
+                "fail" if _count_to_int(summary.get("failing_checks")) > 0 else None,
+            ),
+            (
+                "Warnings/skips",
+                summary.get("warnings_or_skips"),
+                "warn" if _count_to_int(summary.get("warnings_or_skips")) > 0 else None,
+            ),
+            (
+                "Overall",
+                "PASSED" if bool(summary.get("overall_ok")) else "FAILED",
+                _status_kind(summary.get("overall_status")),
+            ),
+        ]
+    )
+    meta = _html_summary_table(
+        [
+            ("Overall OK", summary.get("overall_ok")),
+            ("Enabled checks", enabled_checks or "none"),
+        ]
+    )
+
+    sections: list[str] = [
+        _html_static_section(
+            "Combined Check Summary",
+            _html_check_summary_table(summary_rows),
+        )
+    ]
+
+    reports = report.get("reports")
+    if isinstance(reports, dict):
+        compliance = reports.get("compliance")
+        if isinstance(compliance, dict):
+            sections.append(
+                _html_details_section(
+                    "CF Compliance",
+                    _cf_report_sections(compliance),
+                    open_by_default=False,
+                )
+            )
+        ocean_cover = reports.get("ocean_cover")
+        if isinstance(ocean_cover, dict):
+            ocean_body = (
+                _multi_variable_ocean_body(ocean_cover)
+                if ocean_cover.get("mode") == "all_variables"
+                else _ocean_report_sections(ocean_cover)
+            )
+            sections.append(
+                _html_details_section(
+                    "Ocean Coverage",
+                    ocean_body,
+                    open_by_default=False,
+                )
+            )
+        time_cover = reports.get("time_cover")
+        if isinstance(time_cover, dict):
+            time_body = (
+                _multi_variable_time_cover_body(time_cover)
+                if time_cover.get("mode") == "all_variables"
+                else _time_cover_report_sections(time_cover)
+            )
+            sections.append(
+                _html_details_section(
+                    "Time Coverage",
+                    time_body,
+                    open_by_default=False,
+                )
+            )
+
+    return (
+        stats
+        + meta
+        + "<section class='section-stack'>"
+        + "".join(sections)
+        + "</section>"
+    )
+
+
+def render_pretty_full_report_html(report: Any) -> str:
+    if not isinstance(report, dict):
+        return _yaml_html_fallback(report)
+
+    enabled = report.get("checks_enabled")
+    enabled_checks = (
+        ", ".join(
+            check_name for check_name, is_enabled in enabled.items() if bool(is_enabled)
+        )
+        if isinstance(enabled, dict)
+        else ""
+    )
+    intro = (
+        "<p class='report-subtitle mb-0'>"
+        f"Selected checks: {escape(enabled_checks or 'none')}"
+        "</p>"
+    )
+    return render_report_document(
+        "Full Dataset Check Report",
+        intro,
+        _full_report_sections(report),
+    )

@@ -30,6 +30,19 @@ _NON_COMPLIANT_CATEGORIES = ("FATAL", "ERROR", "WARN")
 _VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _SUPPORTED_CONVENTIONS = ("cf", "ferret")
 _DEFAULT_CONVENTIONS = ("cf", "ferret")
+_CF_ATTR_CASE_KEYS = (
+    "units",
+    "standard_name",
+    "long_name",
+    "axis",
+    "calendar",
+    "coordinates",
+    "bounds",
+    "grid_mapping",
+    "cell_methods",
+    "cell_measures",
+    "positive",
+)
 
 
 @dataclass(frozen=True)
@@ -299,6 +312,109 @@ def _append_coordinate_finding(
         items.append(finding)
 
 
+def _append_variable_finding(
+    issues: dict[str, Any], var_name: str, finding: dict[str, Any]
+) -> None:
+    var_findings = issues.setdefault("variables", {})
+    items = var_findings.setdefault(var_name, [])
+    if isinstance(items, list):
+        items.append(finding)
+
+
+def _case_mismatched_attr_names(
+    attrs: dict[str, Any], expected_keys: tuple[str, ...]
+) -> list[tuple[str, str]]:
+    mismatches: list[tuple[str, str]] = []
+    attr_names = [str(name) for name in attrs]
+    lowered_to_names: dict[str, list[str]] = {}
+    for name in attr_names:
+        lowered_to_names.setdefault(name.lower(), []).append(name)
+
+    for expected in expected_keys:
+        if expected in attrs:
+            continue
+        candidates = lowered_to_names.get(expected.lower(), [])
+        for candidate in candidates:
+            if candidate != expected:
+                mismatches.append((candidate, expected))
+    return mismatches
+
+
+def _normalize_attr_key_case(
+    attrs: dict[str, Any], expected_keys: tuple[str, ...]
+) -> dict[str, Any]:
+    normalized = deepcopy(attrs)
+    keys_in_order = list(normalized.keys())
+
+    for expected in expected_keys:
+        expected_lower = expected.lower()
+        matching_keys = [
+            key
+            for key in keys_in_order
+            if isinstance(key, str) and key.lower() == expected_lower
+        ]
+        if not matching_keys:
+            continue
+
+        if expected in normalized:
+            for key in matching_keys:
+                if key != expected:
+                    normalized.pop(key, None)
+            continue
+
+        source_key = next((key for key in matching_keys if key != expected), None)
+        if source_key is None:
+            continue
+        normalized[expected] = normalized[source_key]
+        for key in matching_keys:
+            if key != expected:
+                normalized.pop(key, None)
+
+    return normalized
+
+
+def _apply_cf_attribute_case_checks(ds: xr.Dataset, issues: dict[str, Any]) -> None:
+    for coord_name, coord in ds.coords.items():
+        mismatches = _case_mismatched_attr_names(coord.attrs, _CF_ATTR_CASE_KEYS)
+        for actual_key, expected_key in mismatches:
+            _append_coordinate_finding(
+                issues,
+                str(coord_name),
+                {
+                    "severity": "WARN",
+                    "convention": "cf",
+                    "item": "attr_case_mismatch",
+                    "message": (
+                        f"Coordinate '{coord_name}' uses attribute '{actual_key}' but "
+                        f"CF expects '{expected_key}'."
+                    ),
+                    "current": actual_key,
+                    "expected": expected_key,
+                    "suggested_fix": "rename_attr_lowercase",
+                },
+            )
+
+    for var_name, da in ds.data_vars.items():
+        mismatches = _case_mismatched_attr_names(da.attrs, _CF_ATTR_CASE_KEYS)
+        for actual_key, expected_key in mismatches:
+            _append_variable_finding(
+                issues,
+                str(var_name),
+                {
+                    "severity": "WARN",
+                    "convention": "cf",
+                    "item": "attr_case_mismatch",
+                    "message": (
+                        f"Variable '{var_name}' uses attribute '{actual_key}' but "
+                        f"CF expects '{expected_key}'."
+                    ),
+                    "current": actual_key,
+                    "expected": expected_key,
+                    "suggested_fix": "rename_attr_lowercase",
+                },
+            )
+
+
 def _apply_ferret_convention_checks(ds: xr.Dataset, issues: dict[str, Any]) -> None:
     for coord_name, coord in ds.coords.items():
         sources: dict[str, Any] = {}
@@ -335,6 +451,8 @@ def _apply_ferret_convention_checks(ds: xr.Dataset, issues: dict[str, Any]) -> N
 def _apply_selected_convention_checks(
     ds: xr.Dataset, issues: dict[str, Any], conventions: tuple[str, ...]
 ) -> None:
+    if "cf" in conventions:
+        _apply_cf_attribute_case_checks(ds, issues)
     if "ferret" in conventions:
         _apply_ferret_convention_checks(ds, issues)
 
@@ -549,7 +667,7 @@ def check_dataset_compliant(
     domain: str | None = None,
     fallback_to_heuristic: bool = True,
     conventions: str | list[str] | tuple[str, ...] | None = None,
-    report_format: ReportFormat = "python",
+    report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
 ) -> dict[str, Any] | str | None:
     """Run compliance checks for selected conventions (e.g. CF, Ferret)."""
@@ -620,6 +738,15 @@ def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
 
     out.attrs = deepcopy(out.attrs)
     out.attrs["Conventions"] = CF_VERSION
+
+    for var_name in out.data_vars:
+        out[var_name].attrs = _normalize_attr_key_case(
+            deepcopy(out[var_name].attrs), _CF_ATTR_CASE_KEYS
+        )
+    for coord_name in out.coords:
+        out[coord_name].attrs = _normalize_attr_key_case(
+            deepcopy(out[coord_name].attrs), _CF_ATTR_CASE_KEYS
+        )
 
     axis_guesses: dict[str, AxisGuess] = {}
     for dim in out.dims:

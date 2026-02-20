@@ -179,10 +179,99 @@ def test_run_check_ocean_cover_mode_routes_to_ocean_checker(
     assert status == 0
     assert seen["report_format"] == "tables"
     assert seen["report_html_file"] is None
+    assert seen["kwargs"] == {
+        "lon_name": None,
+        "lat_name": None,
+        "time_name": "time",
+    }
+
+
+def test_run_check_ocean_cover_mode_forwards_coordinate_names(
+    monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "sample.nc"
+    xr.Dataset(
+        data_vars={"v": (("t", "y", "x"), [[[1.0]]])},
+        coords={"t": [0], "y": [10.0], "x": [20.0]},
+    ).to_netcdf(source)
+
+    seen: dict[str, object] = {}
+
+    def _fake_ocean(
+        ds: xr.Dataset,
+        *,
+        lon_name: str | None = None,
+        lat_name: str | None = None,
+        time_name: str | None = "time",
+        report_format: str = "tables",
+        report_html_file: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        seen["lon_name"] = lon_name
+        seen["lat_name"] = lat_name
+        seen["time_name"] = time_name
+        seen["report_format"] = report_format
+        seen["report_html_file"] = report_html_file
+        seen["kwargs"] = kwargs
+
+    monkeypatch.setattr(cli, "check_ocean_cover", _fake_ocean)
+
+    status = cli.run_check(
+        [
+            "ocean-cover",
+            str(source),
+            "--lon-name",
+            "x",
+            "--lat-name",
+            "y",
+            "--time-name",
+            "t",
+        ]
+    )
+
+    assert status == 0
+    assert seen["lon_name"] == "x"
+    assert seen["lat_name"] == "y"
+    assert seen["time_name"] == "t"
+    assert seen["report_format"] == "tables"
+    assert seen["report_html_file"] is None
     assert seen["kwargs"] == {}
 
 
-def test_run_check_all_mode_with_save_report_routes_all_with_html_paths(
+def test_run_check_time_cover_mode_forwards_time_name(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "sample.nc"
+    xr.Dataset(
+        data_vars={"v": (("t",), [1.0])},
+        coords={"t": [0]},
+    ).to_netcdf(source)
+
+    seen: dict[str, object] = {}
+
+    def _fake_time(
+        ds: xr.Dataset,
+        *,
+        time_name: str | None = "time",
+        report_format: str = "tables",
+        report_html_file: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        seen["time_name"] = time_name
+        seen["report_format"] = report_format
+        seen["report_html_file"] = report_html_file
+        seen["kwargs"] = kwargs
+
+    monkeypatch.setattr(cli, "check_time_cover", _fake_time)
+
+    status = cli.run_check(["time-cover", str(source), "--time-name", "t"])
+
+    assert status == 0
+    assert seen["time_name"] == "t"
+    assert seen["report_format"] == "tables"
+    assert seen["report_html_file"] is None
+    assert seen["kwargs"] == {}
+
+
+def test_run_check_all_mode_with_save_report_uses_single_combined_report(
     monkeypatch, tmp_path
 ) -> None:
     source = tmp_path / "sample.nc"
@@ -193,52 +282,81 @@ def test_run_check_all_mode_with_save_report_routes_all_with_html_paths(
 
     seen: dict[str, object] = {}
 
-    def _fake_compliance(
+    def _fake_all(
         ds: xr.Dataset,
         *,
+        conventions: str | list[str] | tuple[str, ...] | None = None,
+        lon_name: str | None = None,
+        lat_name: str | None = None,
+        time_name: str | None = "time",
         report_format: str = "python",
         report_html_file: str | None = None,
-        **kwargs: object,
     ) -> None:
-        seen["compliance_format"] = report_format
-        seen["compliance_file"] = report_html_file
-        seen["compliance_conventions"] = kwargs.get("conventions")
+        seen["conventions"] = conventions
+        seen["lon_name"] = lon_name
+        seen["lat_name"] = lat_name
+        seen["time_name"] = time_name
+        seen["report_format"] = report_format
+        seen["report_html_file"] = report_html_file
 
-    def _fake_ocean(
-        ds: xr.Dataset,
-        *,
-        report_format: str = "tables",
-        report_html_file: str | None = None,
-        **kwargs: object,
-    ) -> None:
-        seen["ocean_format"] = report_format
-        seen["ocean_file"] = report_html_file
-        seen["ocean_kwargs"] = kwargs
-
-    def _fake_time(
-        ds: xr.Dataset,
-        *,
-        report_format: str = "tables",
-        report_html_file: str | None = None,
-        **kwargs: object,
-    ) -> None:
-        seen["time_format"] = report_format
-        seen["time_file"] = report_html_file
-        seen["time_kwargs"] = kwargs
-
-    monkeypatch.setattr(cli, "check_dataset_compliant", _fake_compliance)
-    monkeypatch.setattr(cli, "check_ocean_cover", _fake_ocean)
-    monkeypatch.setattr(cli, "check_time_cover", _fake_time)
+    monkeypatch.setattr(cli, "_run_all_checks", _fake_all)
 
     status = cli.run_check(["all", str(source), "--save-report"])
 
     assert status == 0
-    assert seen["compliance_format"] == "html"
-    assert seen["ocean_format"] == "html"
-    assert seen["time_format"] == "html"
-    assert seen["compliance_file"] == source.with_name("sample_report.html")
-    assert seen["ocean_file"] == source.with_name("sample_ocean_cover_report.html")
-    assert seen["time_file"] == source.with_name("sample_time_cover_report.html")
-    assert seen["compliance_conventions"] == "cf,ferret"
-    assert seen["ocean_kwargs"] == {}
-    assert seen["time_kwargs"] == {}
+    assert seen["conventions"] == "cf,ferret"
+    assert seen["lon_name"] is None
+    assert seen["lat_name"] is None
+    assert seen["time_name"] == "time"
+    assert seen["report_format"] == "html"
+    assert seen["report_html_file"] == source.with_name("sample_all_report.html")
+
+
+def test_run_check_all_mode_forwards_coordinate_names(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "sample.nc"
+    xr.Dataset(
+        data_vars={"v": (("t", "y", "x"), [[[1.0]]])},
+        coords={"t": [0], "y": [10.0], "x": [20.0]},
+    ).to_netcdf(source)
+
+    seen: dict[str, object] = {}
+
+    def _fake_all(
+        ds: xr.Dataset,
+        *,
+        conventions: str | list[str] | tuple[str, ...] | None = None,
+        lon_name: str | None = None,
+        lat_name: str | None = None,
+        time_name: str | None = "time",
+        report_format: str = "python",
+        report_html_file: str | None = None,
+    ) -> None:
+        seen["conventions"] = conventions
+        seen["lon_name"] = lon_name
+        seen["lat_name"] = lat_name
+        seen["time_name"] = time_name
+        seen["report_format"] = report_format
+        seen["report_html_file"] = report_html_file
+
+    monkeypatch.setattr(cli, "_run_all_checks", _fake_all)
+
+    status = cli.run_check(
+        [
+            "all",
+            str(source),
+            "--lon-name",
+            "x",
+            "--lat-name",
+            "y",
+            "--time-name",
+            "t",
+        ]
+    )
+
+    assert status == 0
+    assert seen["conventions"] == "cf,ferret"
+    assert seen["lon_name"] == "x"
+    assert seen["lat_name"] == "y"
+    assert seen["time_name"] == "t"
+    assert seen["report_format"] == "tables"
+    assert seen["report_html_file"] is None

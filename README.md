@@ -25,6 +25,11 @@ ocean_report = ds.check.ocean_cover(report_format="python")
 time_report = ds.check.time_cover(report_format="python")
 ```
 
+By default (`report_format="auto"`), reports adapt to environment:
+- Jupyter notebooks: HTML
+- CLI terminals: rich tables
+- Other environments (scripts/tests): Python dicts
+
 You can request rich table reports printed to stdout:
 
 ```python
@@ -43,13 +48,16 @@ nc-check ocean-cover input.nc
 nc-check time-cover input.nc
 nc-check all input.nc
 
+# Explicit coordinate names when they differ from lon/lat/time
+nc-check ocean-cover input.nc --lon-name x --lat-name y --time-name t
+nc-check time-cover input.nc --time-name t
+nc-check all input.nc --lon-name x --lat-name y --time-name t
+
 # Saves an HTML report beside input.nc as input_report.html
 nc-check input.nc --save-report
 
-# With "all", saves three reports:
-# input_report.html
-# input_ocean_cover_report.html
-# input_time_cover_report.html
+# With "all", saves one combined report:
+# input_all_report.html
 nc-check all input.nc --save-report
 ```
 
@@ -67,11 +75,16 @@ You can choose which conventions to check:
 ```python
 ds.check.compliance(conventions="cf,ferret")
 ds.check.compliance(conventions="ferret")  # custom-only checks
+
+# Explicit coordinate names
+ds.check.ocean_cover(lon_name="x", lat_name="y", time_name="t")
+ds.check.time_cover(time_name="t")
+ds.check.all(lon_name="x", lat_name="y", time_name="t")
 ```
 
 `compliance()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
-in-memory NetCDF payload created from dataset metadata (no `.nc` file written to disk),
-and returns a dictionary of detected issues.
+in-memory NetCDF payload created from dataset metadata (no `.nc` file written to disk).
+With `report_format="python"` it returns a dictionary of detected issues.
 
 `make_cf_compliant()` returns a new dataset with safe automatic fixes, including:
 - `Conventions = "CF-1.12"`
@@ -81,12 +94,12 @@ and returns a dictionary of detected issues.
 `ocean_cover()` runs fast ocean-grid checks and returns a report with:
 - east/west edge-of-map detection (persistent missing longitude columns, reported by longitude),
 - land/ocean sanity checks at fixed reference points (offset detection).
-- `report_format="tables"` by default.
+- `report_format="auto"` by default.
 - When `var_name` is omitted, all data variables with inferred lat/lon dimensions are checked.
 
 `time_cover()` runs time-dimension missing-data checks and reports missing
 time-slice ranges.
-- `report_format="tables"` by default.
+- `report_format="auto"` by default.
 - When `var_name` is omitted, all data variables are checked.
 
 You can disable individual checks:

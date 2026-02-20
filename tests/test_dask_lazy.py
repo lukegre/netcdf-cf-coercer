@@ -53,7 +53,7 @@ def test_check_accepts_lazy_dataset_with_fallback(monkeypatch) -> None:
         coords={"time": [0, 1, 2, 3]},
     )
 
-    issues = ds.check.compliance()
+    issues = ds.check.compliance(report_format="python")
 
     assert issues["check_method"] == "heuristic"
     assert issues["engine_status"] == "unavailable"
@@ -82,7 +82,10 @@ def test_check_accepts_lazy_dataset_without_fallback(monkeypatch) -> None:
         coords={"time": [0, 1, 2, 3]},
     )
 
-    issues = ds.check.compliance(standard_name_table_xml=None)
+    issues = ds.check.compliance(
+        standard_name_table_xml=None,
+        report_format="python",
+    )
 
     assert issues["check_method"] == "cfchecker"
     assert issues["engine_status"] == "ok"

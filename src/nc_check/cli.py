@@ -6,6 +6,7 @@ from pathlib import Path
 
 import xarray as xr
 
+from . import accessor as _accessor  # noqa: F401  # register Dataset.check accessor
 from .core import check_dataset_compliant, make_dataset_compliant
 from .ocean import check_ocean_cover, check_time_cover
 
@@ -42,8 +43,11 @@ def _build_check_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  nc-check compliance input.nc\n"
             "  nc-check ocean-cover input.nc\n"
+            "  nc-check ocean-cover input.nc --lon-name x --lat-name y --time-name t\n"
             "  nc-check time-cover input.nc\n"
+            "  nc-check time-cover input.nc --time-name t\n"
             "  nc-check all input.nc --save-report\n"
+            "  nc-check all input.nc --lon-name x --lat-name y --time-name t\n"
             "  nc-check input.nc   # shorthand for `nc-check compliance input.nc`"
         ),
     )
@@ -58,9 +62,10 @@ def _build_check_parser() -> argparse.ArgumentParser:
             "--save-report",
             action="store_true",
             help=(
-                "Save HTML report(s) next to the input file using "
-                "'<input>_<command>_report.html'. Compliance uses "
-                "'<input>_report.html'."
+                "Save an HTML report next to the input file. Compliance uses "
+                "'<input>_report.html'; ocean-cover/time-cover use "
+                "'<input>_<command>_report.html'; all uses "
+                "'<input>_all_report.html' (single combined report)."
             ),
         )
 
@@ -80,12 +85,32 @@ def _build_check_parser() -> argparse.ArgumentParser:
         help="Run ocean-coverage checks.",
     )
     _add_shared_options(ocean_cover)
+    ocean_cover.add_argument(
+        "--lon-name",
+        default=None,
+        help="Explicit longitude coordinate name (default: inferred).",
+    )
+    ocean_cover.add_argument(
+        "--lat-name",
+        default=None,
+        help="Explicit latitude coordinate name (default: inferred).",
+    )
+    ocean_cover.add_argument(
+        "--time-name",
+        default="time",
+        help="Time coordinate/dimension name for time-aware checks (default: time).",
+    )
 
     time_cover = subparsers.add_parser(
         "time-cover",
         help="Run time-coverage checks.",
     )
     _add_shared_options(time_cover)
+    time_cover.add_argument(
+        "--time-name",
+        default="time",
+        help="Explicit time coordinate/dimension name (default: time).",
+    )
 
     check_all = subparsers.add_parser(
         "all",
@@ -96,6 +121,21 @@ def _build_check_parser() -> argparse.ArgumentParser:
         "--conventions",
         default="cf,ferret",
         help="Comma-separated conventions to check for compliance (default: cf,ferret).",
+    )
+    check_all.add_argument(
+        "--lon-name",
+        default=None,
+        help="Explicit longitude coordinate name for ocean checks (default: inferred).",
+    )
+    check_all.add_argument(
+        "--lat-name",
+        default=None,
+        help="Explicit latitude coordinate name for ocean checks (default: inferred).",
+    )
+    check_all.add_argument(
+        "--time-name",
+        default="time",
+        help="Explicit time coordinate/dimension name for ocean/time checks (default: time).",
     )
 
     return parser
@@ -113,6 +153,9 @@ def run_check(argv: list[str] | None = None) -> int:
         _default_report_html_path(input_file, mode) if args.save_report else None
     )
     conventions = getattr(args, "conventions", "cf,ferret")
+    lon_name = getattr(args, "lon_name", None)
+    lat_name = getattr(args, "lat_name", None)
+    time_name = getattr(args, "time_name", "time")
 
     try:
         with xr.open_dataset(input_file, chunks={}) as ds:
@@ -126,46 +169,28 @@ def run_check(argv: list[str] | None = None) -> int:
             elif mode == "ocean-cover":
                 check_ocean_cover(
                     ds,
+                    lon_name=lon_name,
+                    lat_name=lat_name,
+                    time_name=time_name,
                     report_format=report_format,
                     report_html_file=report_html_file,
                 )
             elif mode == "time-cover":
                 check_time_cover(
                     ds,
+                    time_name=time_name,
                     report_format=report_format,
                     report_html_file=report_html_file,
                 )
             elif mode == "all":
-                compliance_report = (
-                    _default_report_html_path(input_file, "compliance")
-                    if args.save_report
-                    else None
-                )
-                ocean_report = (
-                    _default_report_html_path(input_file, "ocean-cover")
-                    if args.save_report
-                    else None
-                )
-                time_report = (
-                    _default_report_html_path(input_file, "time-cover")
-                    if args.save_report
-                    else None
-                )
-                check_dataset_compliant(
+                _run_all_checks(
                     ds,
                     conventions=conventions,
+                    lon_name=lon_name,
+                    lat_name=lat_name,
+                    time_name=time_name,
                     report_format=report_format,
-                    report_html_file=compliance_report,
-                )
-                check_ocean_cover(
-                    ds,
-                    report_format=report_format,
-                    report_html_file=ocean_report,
-                )
-                check_time_cover(
-                    ds,
-                    report_format=report_format,
-                    report_html_file=time_report,
+                    report_html_file=report_html_file,
                 )
             else:
                 parser.error(f"Unsupported mode: {mode}")
@@ -188,6 +213,26 @@ def _default_report_html_path(input_file: Path, mode: str = "compliance") -> Pat
         suffix = f"_{mode.replace('-', '_')}_report"
     report_name = f"{stem}{suffix}.html"
     return input_file.with_name(report_name)
+
+
+def _run_all_checks(
+    ds: xr.Dataset,
+    *,
+    conventions: str | list[str] | tuple[str, ...] | None,
+    lon_name: str | None,
+    lat_name: str | None,
+    time_name: str | None,
+    report_format: str,
+    report_html_file: str | Path | None,
+) -> dict[str, object] | str | None:
+    return ds.check.all(
+        conventions=conventions,
+        lon_name=lon_name,
+        lat_name=lat_name,
+        time_name=time_name,
+        report_format=report_format,
+        report_html_file=report_html_file,
+    )
 
 
 def run_comply(argv: list[str] | None = None) -> int:
