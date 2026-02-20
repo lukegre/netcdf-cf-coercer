@@ -15,7 +15,7 @@ def test_make_compliant_preserves_lazy_data_vars() -> None:
         coords={"time": [0, 1, 2, 3], "lat": [10.0, 11.0, 12.0], "lon": [20.0, 21.0]},
     )
 
-    out = ds.cf.make_compliant()
+    out = ds.check.make_cf_compliant()
 
     assert isinstance(out["temp"].data, dask.Array)
     assert out["temp"].chunks == ds["temp"].chunks
@@ -53,7 +53,7 @@ def test_check_accepts_lazy_dataset_with_fallback(monkeypatch) -> None:
         coords={"time": [0, 1, 2, 3]},
     )
 
-    issues = ds.cf.check()
+    issues = ds.check.cf()
 
     assert issues["check_method"] == "heuristic"
     assert issues["engine_status"] == "unavailable"
@@ -82,7 +82,7 @@ def test_check_accepts_lazy_dataset_without_fallback(monkeypatch) -> None:
         coords={"time": [0, 1, 2, 3]},
     )
 
-    issues = ds.cf.check(standard_name_table_xml=None)
+    issues = ds.check.cf(standard_name_table_xml=None)
 
     assert issues["check_method"] == "cfchecker"
     assert issues["engine_status"] == "ok"
@@ -104,7 +104,7 @@ def test_make_compliant_lazy_write_has_no_coord_fillvalue(tmp_path) -> None:
     ds["lon"].encoding = {"_FillValue": -9999.0}
     ds["depth"].encoding = {"_FillValue": -9999.0}
 
-    out = ds.cf.make_compliant()
+    out = ds.check.make_cf_compliant()
 
     assert isinstance(out["temp"].data, dask.Array)
     for coord_name in out.coords:

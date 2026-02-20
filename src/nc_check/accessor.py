@@ -10,24 +10,26 @@ from .core import (
     check_dataset_compliant,
     make_dataset_compliant,
 )
+from .ocean import check_ocean_cover as run_ocean_cover_check
 
 _WRAPS_ASSIGNED = ("__module__", "__name__", "__qualname__", "__annotations__")
 
 
-@xr.register_dataset_accessor("cf")
+@xr.register_dataset_accessor("check")
 class CFCoercerAccessor:
     """Dataset-level CF helpers.
 
     Methods:
-    - ``check()``: inspect CF-1.12 metadata issues.
-    - ``make_compliant()``: return dataset with safe, automatic fixes applied.
+    - ``cf()``: inspect CF-1.12 metadata issues.
+    - ``make_cf_compliant()``: return dataset with safe, automatic fixes applied.
+    - ``check_ocean_cover()``: run fast ocean-coverage sanity checks.
     """
 
     def __init__(self, xarray_obj: xr.Dataset) -> None:
         self._ds = xarray_obj
 
     @wraps(check_dataset_compliant, assigned=_WRAPS_ASSIGNED)
-    def check(
+    def cf(
         self,
         *,
         cf_version: str = "1.12",
@@ -67,11 +69,40 @@ class CFCoercerAccessor:
         )
 
     @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
-    def make_compliant(self) -> xr.Dataset:
+    def make_cf_compliant(self) -> xr.Dataset:
         """Return a new dataset with safe CF-1.12 metadata fixes applied."""
         return make_dataset_compliant(self._ds)
 
     @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
     def comply(self) -> xr.Dataset:
-        """Alias for `make_compliant()`."""
-        return self.make_compliant()
+        """Alias for `make_cf_compliant()`."""
+        return self.make_cf_compliant()
+
+    @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
+    def make_compliant(self) -> xr.Dataset:
+        """Backward-compatible alias for `make_cf_compliant()`."""
+        return self.make_cf_compliant()
+
+    @wraps(run_ocean_cover_check, assigned=_WRAPS_ASSIGNED)
+    def check_ocean_cover(
+        self,
+        *,
+        var_name: str | None = None,
+        lon_name: str | None = None,
+        lat_name: str | None = None,
+        time_name: str | None = "time",
+        check_edge_sliver: bool = True,
+        check_land_ocean_offset: bool = True,
+        check_time_missing: bool = True,
+    ) -> dict[str, Any]:
+        """Run fast ocean-coverage checks for a gridded ocean variable."""
+        return run_ocean_cover_check(
+            self._ds,
+            var_name=var_name,
+            lon_name=lon_name,
+            lat_name=lat_name,
+            time_name=time_name,
+            check_edge_sliver=check_edge_sliver,
+            check_land_ocean_offset=check_land_ocean_offset,
+            check_time_missing=check_time_missing,
+        )
