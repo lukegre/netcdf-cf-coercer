@@ -78,3 +78,28 @@ def test_translate_cfchecker_results_counts_and_scopes() -> None:
 def test_normalize_requested_conventions_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="Unsupported conventions"):
         core._normalize_requested_conventions("cf,not-real")
+
+
+def test_check_dataset_compliant_rejects_unknown_report_format() -> None:
+    ds = xr.Dataset(data_vars={"v": (("time",), [1.0])}, coords={"time": [0]})
+
+    with pytest.raises(ValueError, match="Unsupported report_format"):
+        core.check_dataset_compliant(
+            ds,
+            conventions="ferret",
+            standard_name_table_xml=None,
+            report_format="bad",
+        )
+
+
+def test_check_dataset_compliant_rejects_html_file_without_html_format() -> None:
+    ds = xr.Dataset(data_vars={"v": (("time",), [1.0])}, coords={"time": [0]})
+
+    with pytest.raises(ValueError, match="only valid when report_format='html'"):
+        core.check_dataset_compliant(
+            ds,
+            conventions="ferret",
+            standard_name_table_xml=None,
+            report_format="python",
+            report_html_file="report.html",
+        )

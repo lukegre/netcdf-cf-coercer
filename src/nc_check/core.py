@@ -4,12 +4,20 @@ import re
 import warnings
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from .formatting import print_pretty_report
+from .formatting import (
+    ReportFormat,
+    maybe_display_html_report,
+    normalize_report_format,
+    print_pretty_report,
+    render_pretty_report_html,
+    save_html_report,
+)
 from .standard_names import augment_issues_with_standard_name_suggestions
 
 CF_VERSION = "CF-1.12"
@@ -541,9 +549,14 @@ def check_dataset_compliant(
     domain: str | None = None,
     fallback_to_heuristic: bool = True,
     conventions: str | list[str] | tuple[str, ...] | None = None,
-    pretty_print: bool = False,
-) -> dict[str, Any] | None:
+    report_format: ReportFormat = "python",
+    report_html_file: str | Path | None = None,
+) -> dict[str, Any] | str | None:
     """Run compliance checks for selected conventions (e.g. CF, Ferret)."""
+    resolved_format = normalize_report_format(report_format)
+    if report_html_file is not None and resolved_format != "html":
+        raise ValueError("`report_html_file` is only valid when report_format='html'.")
+
     selected_conventions = _normalize_requested_conventions(conventions)
 
     if "cf" in selected_conventions:
@@ -590,9 +603,14 @@ def check_dataset_compliant(
     _apply_selected_convention_checks(ds, issues, selected_conventions)
     _recompute_counts(issues)
 
-    if pretty_print:
+    if resolved_format == "tables":
         print_pretty_report(issues)
         return None
+    if resolved_format == "html":
+        html_report = render_pretty_report_html(issues)
+        save_html_report(html_report, report_html_file)
+        maybe_display_html_report(html_report)
+        return html_report
     return issues
 
 

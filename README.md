@@ -19,25 +19,35 @@ ds = xr.Dataset(
     coords={"time": [0], "lat": [10.0], "lon": [20.0]},
 )
 
-issues = ds.check.cf()
+issues = ds.check.compliance(report_format="python")
 fixed = ds.check.make_cf_compliant()
-ocean_report = ds.check.check_ocean_cover()
+ocean_report = ds.check.ocean_cover(report_format="python")
+time_report = ds.check.time_cover(report_format="python")
 ```
 
-You can also request a YAML-like text report printed to stdout:
+You can request rich table reports printed to stdout:
 
 ```python
-ds.check.cf(pretty_print=True)
+ds.check.compliance(report_format="tables")
+```
+
+For notebooks, use HTML output and optionally save it:
+
+```python
+html = ds.check.compliance(
+    report_format="html",
+    report_html_file="cf-report.html",
+)
 ```
 
 You can choose which conventions to check:
 
 ```python
-ds.check.cf(conventions="cf,ferret")
-ds.check.cf(conventions="ferret")  # custom-only checks
+ds.check.compliance(conventions="cf,ferret")
+ds.check.compliance(conventions="ferret")  # custom-only checks
 ```
 
-`check()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
+`compliance()` runs [cf-checker](https://github.com/cedadev/cf-checker/) against an
 in-memory NetCDF payload created from dataset metadata (no `.nc` file written to disk),
 and returns a dictionary of detected issues.
 
@@ -46,18 +56,30 @@ and returns a dictionary of detected issues.
 - standard coordinate attributes for inferred `time`, `lat`, and `lon` axes
 - creation of missing dimension coordinates for inferred axes
 
-`check_ocean_cover()` runs fast ocean-grid checks and returns a report with:
-- east/west edge sliver detection (persistent missing longitude columns),
-- land/ocean sanity checks at fixed reference points (offset detection),
-- time-slice missing-data ranges.
+`ocean_cover()` runs fast ocean-grid checks and returns a report with:
+- east/west edge-of-map detection (persistent missing longitude columns, reported by longitude),
+- land/ocean sanity checks at fixed reference points (offset detection).
+- `report_format="tables"` by default.
+- When `var_name` is omitted, all data variables with inferred lat/lon dimensions are checked.
+
+`time_cover()` runs time-dimension missing-data checks and reports missing
+time-slice ranges.
+- `report_format="tables"` by default.
+- When `var_name` is omitted, all data variables are checked.
 
 You can disable individual checks:
 
 ```python
-ds.check.check_ocean_cover(
-    check_edge_sliver=True,
+ds.check.ocean_cover(
+    check_edge_of_map=True,
     check_land_ocean_offset=True,
-    check_time_missing=True,
+    report_format="python",
+)
+```
+
+```python
+ds.check.time_cover(
+    report_format="python",
 )
 ```
 
@@ -65,8 +87,8 @@ Notes:
 - `cfchecker` requires the system `udunits2` library via `cfunits`.
 - For large files, prefer opening with lazy chunks: `xr.open_dataset(path, chunks={})`.
 - The built-in `ferret` convention flags coordinate `_FillValue` usage as an error.
-- If `cfchecker` cannot run, `check()` falls back to heuristic checks and includes
+- If `cfchecker` cannot run, `compliance()` falls back to heuristic checks and includes
   a `checker_error` field in the response.
 - You can bias standard-name suggestions by domain, e.g.
-  `ds.check.cf(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
+  `ds.check.compliance(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
   and `biogeochemistry`).

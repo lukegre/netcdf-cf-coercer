@@ -13,7 +13,7 @@ def test_check_reports_missing_conventions_and_coord_attrs() -> None:
         coords={"time": [0, 1], "lat": [10.0, 11.0], "lon": [20.0, 21.0]},
     )
 
-    issues = ds.check.cf()
+    issues = ds.check.compliance()
 
     assert issues["cf_version"] == "CF-1.12"
     assert issues["engine"] == "cfchecker"
@@ -96,7 +96,7 @@ def test_comply_clears_coordinate_encodings() -> None:
 def test_unknown_dims_are_reported_but_not_forced() -> None:
     ds = xr.Dataset(data_vars={"v": (("station",), [1, 2, 3])})
 
-    issues = ds.check.cf()
+    issues = ds.check.compliance()
     out = ds.check.comply()
 
     if issues["engine_status"] == "unavailable":
@@ -117,7 +117,7 @@ def test_fallback_checker_reports_variable_level_issues(monkeypatch) -> None:
         coords={"time": [0, 1]},
     )
 
-    issues = ds.check.cf()
+    issues = ds.check.compliance()
 
     assert issues["engine_status"] == "unavailable"
     assert issues["check_method"] == "heuristic"
@@ -142,7 +142,7 @@ def test_standard_name_suggestions_from_xml(monkeypatch) -> None:
     ds["tos"].attrs["units"] = "degC"
 
     table = Path("tests/data/cf-standard-name-table.xml")
-    issues = ds.check.cf(standard_name_table_xml=str(table))
+    issues = ds.check.compliance(standard_name_table_xml=str(table))
 
     suggestions = issues["suggestions"]["variables"]["tos"]
     assert "sea_surface_temperature" in suggestions["recommended_standard_names"]
@@ -163,7 +163,7 @@ def test_units_check_for_known_standard_name_from_xml(monkeypatch) -> None:
     ds["sst"].attrs["units"] = "degC"
 
     table = Path("tests/data/cf-standard-name-table.xml")
-    issues = ds.check.cf(standard_name_table_xml=str(table))
+    issues = ds.check.compliance(standard_name_table_xml=str(table))
 
     unit_check = issues["suggestions"]["variables"]["sst"]["units_check"]
     assert unit_check["status"] == "mismatch"
@@ -183,7 +183,7 @@ def test_standard_name_table_file_url_is_supported(monkeypatch) -> None:
     ds["tos"].attrs["long_name"] = "surface ocean temperature"
 
     table_url = Path("tests/data/cf-standard-name-table.xml").resolve().as_uri()
-    issues = ds.check.cf(standard_name_table_xml=table_url)
+    issues = ds.check.compliance(standard_name_table_xml=table_url)
 
     suggestions = issues["suggestions"]["variables"]["tos"]
     assert "sea_surface_temperature" in suggestions["recommended_standard_names"]
@@ -203,11 +203,11 @@ def test_domain_bias_changes_suggested_standard_name(monkeypatch) -> None:
 
     table = Path("tests/data/cf-standard-name-table.xml")
 
-    ocean = ds.check.cf(
+    ocean = ds.check.compliance(
         standard_name_table_xml=str(table),
         domain="ocean",
     )
-    atmosphere = ds.check.cf(
+    atmosphere = ds.check.compliance(
         standard_name_table_xml=str(table),
         domain="atmosphere",
     )
@@ -223,7 +223,7 @@ def test_domain_bias_changes_suggested_standard_name(monkeypatch) -> None:
     assert atmosphere_top == "air_temperature"
 
 
-def test_pretty_print_prints_yaml_like_output(monkeypatch, capsys) -> None:
+def test_tables_report_prints_rich_output(monkeypatch, capsys) -> None:
     def _raise(*args, **kwargs):
         raise RuntimeError("force fallback")
 
@@ -234,7 +234,7 @@ def test_pretty_print_prints_yaml_like_output(monkeypatch, capsys) -> None:
         coords={"time": [0, 1]},
     )
 
-    report = ds.check.cf(pretty_print=True)
+    report = ds.check.compliance(report_format="tables")
     out = capsys.readouterr().out
 
     assert report is None
@@ -244,6 +244,51 @@ def test_pretty_print_prints_yaml_like_output(monkeypatch, capsys) -> None:
     assert "Variable Findings" in out
 
 
+def test_html_report_can_be_saved(tmp_path) -> None:
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+    report_file = tmp_path / "cf-report.html"
+
+    html = ds.check.compliance(
+        conventions="ferret",
+        standard_name_table_xml=None,
+        report_format="html",
+        report_html_file=report_file,
+    )
+
+    assert isinstance(html, str)
+    assert "CF Compliance Report" in html
+    assert "<details class='report-section'" in html
+    assert "Notes" in html
+    assert "bootstrap@5" in html
+    assert "summary-table" in html
+    assert "kv-grid" not in html
+    assert "WARNING" in html
+    assert report_file.exists()
+    assert report_file.read_text(encoding="utf-8") == html
+
+
+def test_cf_alias_accepts_html_report_format() -> None:
+    ds = xr.Dataset(
+        data_vars={"temp": (("time",), [290.0, 291.0])},
+        coords={"time": [0, 1]},
+    )
+
+    html = ds.check.cf(
+        conventions="ferret",
+        standard_name_table_xml=None,
+        report_format="html",
+    )
+
+    assert isinstance(html, str)
+    assert "CF Compliance Report" in html
+    assert "<details class='report-section'" in html
+    assert "summary-table" in html
+    assert "WARNING" in html
+
+
 def test_ferret_convention_flags_coordinate_fillvalue() -> None:
     ds = xr.Dataset(
         data_vars={"temp": (("time",), [290.0, 291.0])},
@@ -251,7 +296,7 @@ def test_ferret_convention_flags_coordinate_fillvalue() -> None:
     )
     ds["time"].encoding = {"_FillValue": -9999}
 
-    issues = ds.check.cf(standard_name_table_xml=None)
+    issues = ds.check.compliance(standard_name_table_xml=None)
 
     findings = issues["coordinates"]["time"]
     assert any(
@@ -269,7 +314,7 @@ def test_can_disable_ferret_convention_checks() -> None:
     )
     ds["time"].encoding = {"_FillValue": -9999}
 
-    issues = ds.check.cf(
+    issues = ds.check.compliance(
         standard_name_table_xml=None,
         conventions="cf",
     )
@@ -293,7 +338,7 @@ def test_ferret_only_mode_skips_cfchecker(monkeypatch) -> None:
     )
     ds["time"].encoding = {"_FillValue": -9999}
 
-    issues = ds.check.cf(
+    issues = ds.check.compliance(
         conventions="ferret",
         standard_name_table_xml=None,
     )

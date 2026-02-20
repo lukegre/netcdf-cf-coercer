@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import xarray as xr
+from .formatting import (
+    ReportFormat,
+    maybe_display_html_report,
+    normalize_report_format,
+    print_pretty_ocean_report,
+    print_pretty_time_cover_report,
+    render_pretty_ocean_report_html,
+    render_pretty_ocean_reports_html,
+    render_pretty_time_cover_report_html,
+    render_pretty_time_cover_reports_html,
+    save_html_report,
+)
 
 _LON_CANDIDATES = ("lon", "longitude", "x")
 _LAT_CANDIDATES = ("lat", "latitude", "y")
@@ -71,13 +84,13 @@ def _resolve_time_dim(da: xr.DataArray, preferred_name: str | None) -> str | Non
     return None
 
 
-def _choose_data_var(
+def _choose_data_vars(
     ds: xr.Dataset,
     *,
     var_name: str | None,
     lon_dim: str,
     lat_dim: str,
-) -> xr.DataArray:
+) -> list[xr.DataArray]:
     if var_name is not None:
         if var_name not in ds.data_vars:
             raise ValueError(f"Data variable '{var_name}' not found.")
@@ -86,11 +99,15 @@ def _choose_data_var(
             raise ValueError(
                 f"Data variable '{var_name}' must include lon dim '{lon_dim}' and lat dim '{lat_dim}'."
             )
-        return da
+        return [da]
 
+    selected: list[xr.DataArray] = []
     for name, da in ds.data_vars.items():
         if lon_dim in da.dims and lat_dim in da.dims:
-            return da
+            selected.append(da)
+
+    if selected:
+        return selected
 
     raise ValueError(
         "Could not infer ocean variable. Provide `var_name` for a variable that has lat/lon dimensions."
@@ -158,6 +175,21 @@ def _range_records(
     return out
 
 
+def _value_ranges_from_indices(
+    indices: list[int],
+    values: np.ndarray[Any, Any],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for start, end in _indices_to_ranges(indices):
+        out.append(
+            {
+                "start": _value_label(values[start]),
+                "end": _value_label(values[end]),
+            }
+        )
+    return out
+
+
 def _longitude_convention(lon_values: np.ndarray[Any, Any]) -> str:
     lon_min = float(np.nanmin(lon_values))
     lon_max = float(np.nanmax(lon_values))
@@ -204,7 +236,7 @@ def _missing_lon_indices_for_time(
     return np.flatnonzero(np.asarray(mask.values, dtype=bool))
 
 
-def _edge_sliver_check(
+def _edge_of_map_check(
     da: xr.DataArray,
     *,
     lon_name: str,
@@ -222,8 +254,6 @@ def _edge_sliver_check(
             time_dim=None,
             time_index=None,
         )
-        missing_time_indices = [0] if persistent_missing_lon_indices.size else []
-        time_coord = None
     else:
         time_size = int(da.sizes[time_dim])
         last_idx = time_size - 1
@@ -261,19 +291,6 @@ def _edge_sliver_check(
                 if not np.array_equal(missing_middle, persistent_missing_lon_indices):
                     persistent_missing_lon_indices = np.array([], dtype=int)
 
-        if persistent_missing_lon_indices.size:
-            subset = da.isel({lon_dim: persistent_missing_lon_indices.tolist()})
-            missing = _missing_mask(subset)
-            reduce_dims = [dim for dim in missing.dims if dim != time_dim]
-            if reduce_dims:
-                missing = missing.all(dim=reduce_dims)
-            missing_time_indices = np.flatnonzero(
-                np.asarray(missing.values, dtype=bool)
-            ).tolist()
-        else:
-            missing_time_indices = []
-        time_coord = da.coords.get(time_dim)
-
     lon_values = np.asarray(da.coords[lon_name].values)
     missing_lon_list = persistent_missing_lon_indices.tolist()
     missing_lon_values = [float(lon_values[idx]) for idx in missing_lon_list]
@@ -283,11 +300,31 @@ def _edge_sliver_check(
         "status": "fail" if missing_lon_list else "pass",
         "sampled_time_indices": sampled_indices,
         "missing_longitude_count": len(missing_lon_list),
-        "missing_longitude_indices": missing_lon_list,
         "missing_longitudes": missing_lon_values,
-        "missing_slice_count": len(missing_time_indices),
-        "missing_slice_ranges": _range_records(missing_time_indices, time_coord),
+        "missing_longitude_ranges": _value_ranges_from_indices(
+            missing_lon_list, lon_values
+        ),
     }
+
+
+def _choose_time_vars(
+    ds: xr.Dataset,
+    *,
+    var_name: str | None,
+    time_name: str | None,
+) -> list[tuple[xr.DataArray, str | None]]:
+    if var_name is not None:
+        if var_name not in ds.data_vars:
+            raise ValueError(f"Data variable '{var_name}' not found.")
+        da = ds[var_name]
+        return [(da, _resolve_time_dim(da, time_name))]
+
+    selected = [
+        (da, _resolve_time_dim(da, time_name)) for _, da in ds.data_vars.items()
+    ]
+    if not selected:
+        raise ValueError("Dataset has no data variables to check.")
+    return selected
 
 
 def _point_is_missing(point: xr.DataArray) -> bool:
@@ -395,28 +432,20 @@ def _time_missing_check(da: xr.DataArray, *, time_dim: str | None) -> dict[str, 
     }
 
 
-def check_ocean_cover(
-    ds: xr.Dataset,
+def _single_ocean_report(
+    da: xr.DataArray,
     *,
-    var_name: str | None = None,
-    lon_name: str | None = None,
-    lat_name: str | None = None,
-    time_name: str | None = "time",
-    check_edge_sliver: bool = True,
-    check_land_ocean_offset: bool = True,
-    check_time_missing: bool = True,
+    lon_name: str,
+    lat_name: str,
+    lon_dim: str,
+    lat_dim: str,
+    lon_values: np.ndarray[Any, Any],
+    lat_values: np.ndarray[Any, Any],
+    time_name: str | None,
+    check_edge_of_map: bool,
+    check_land_ocean_offset: bool,
+    check_time_missing: bool | None,
 ) -> dict[str, Any]:
-    """Run fast ocean-coverage sanity checks on a gridded variable."""
-    lon_name = lon_name or _guess_coord_name(ds, _LON_CANDIDATES, "degrees_east")
-    lat_name = lat_name or _guess_coord_name(ds, _LAT_CANDIDATES, "degrees_north")
-    if lon_name is None or lat_name is None:
-        raise ValueError(
-            "Could not infer longitude/latitude coordinates. Pass `lon_name` and `lat_name`."
-        )
-
-    lon_dim, lon_values = _resolve_1d_coord(ds, lon_name)
-    lat_dim, lat_values = _resolve_1d_coord(ds, lat_name)
-    da = _choose_data_var(ds, var_name=var_name, lon_dim=lon_dim, lat_dim=lat_dim)
     time_dim = _resolve_time_dim(da, time_name)
     lon_convention = _longitude_convention(lon_values)
 
@@ -435,21 +464,26 @@ def check_ocean_cover(
             "latitude_max": float(np.nanmax(lat_values)),
         },
         "checks_enabled": {
-            "edge_sliver": bool(check_edge_sliver),
+            "edge_of_map": bool(check_edge_of_map),
             "land_ocean_offset": bool(check_land_ocean_offset),
-            "time_missing": bool(check_time_missing),
         },
     }
+    if check_time_missing is not None:
+        report["note"] = (
+            "Time coverage has moved to `check_time_cover()` / `ds.check.time_cover()`."
+        )
 
-    if check_edge_sliver:
-        report["edge_sliver"] = _edge_sliver_check(
+    if check_edge_of_map:
+        report["edge_of_map"] = _edge_of_map_check(
             da,
             lon_name=lon_name,
             lon_dim=lon_dim,
             time_dim=time_dim,
         )
     else:
-        report["edge_sliver"] = {"enabled": False, "status": "skipped"}
+        report["edge_of_map"] = {"enabled": False, "status": "skipped"}
+    # Backward-compatible alias.
+    report["edge_sliver"] = report["edge_of_map"]
 
     if check_land_ocean_offset:
         report["land_ocean_offset"] = _point_alignment_check(
@@ -464,15 +498,153 @@ def check_ocean_cover(
     else:
         report["land_ocean_offset"] = {"enabled": False, "status": "skipped"}
 
-    if check_time_missing:
-        report["time_missing"] = _time_missing_check(da, time_dim=time_dim)
-    else:
-        report["time_missing"] = {"enabled": False, "status": "skipped"}
-
     statuses = [
-        str(report["edge_sliver"].get("status")),
+        str(report["edge_of_map"].get("status")),
         str(report["land_ocean_offset"].get("status")),
-        str(report["time_missing"].get("status")),
     ]
     report["ok"] = not any(status in {"fail", "error"} for status in statuses)
+    return report
+
+
+def _single_time_cover_report(
+    da: xr.DataArray,
+    *,
+    time_dim: str | None,
+) -> dict[str, Any]:
+    time_missing = _time_missing_check(da, time_dim=time_dim)
+    return {
+        "variable": str(da.name),
+        "time_dim": time_dim,
+        "time_missing": time_missing,
+        "ok": str(time_missing.get("status")) in {"pass", "skipped_no_time", "skipped"},
+    }
+
+
+def check_ocean_cover(
+    ds: xr.Dataset,
+    *,
+    var_name: str | None = None,
+    lon_name: str | None = None,
+    lat_name: str | None = None,
+    time_name: str | None = "time",
+    check_edge_of_map: bool = True,
+    check_land_ocean_offset: bool = True,
+    report_format: ReportFormat = "tables",
+    report_html_file: str | Path | None = None,
+    check_edge_sliver: bool | None = None,
+    check_time_missing: bool | None = None,
+) -> dict[str, Any] | str | None:
+    """Run fast ocean-coverage sanity checks on one or more gridded variables."""
+    resolved_format = normalize_report_format(report_format)
+    if report_html_file is not None and resolved_format != "html":
+        raise ValueError("`report_html_file` is only valid when report_format='html'.")
+
+    if check_edge_sliver is not None:
+        check_edge_of_map = bool(check_edge_sliver)
+    lon_name = lon_name or _guess_coord_name(ds, _LON_CANDIDATES, "degrees_east")
+    lat_name = lat_name or _guess_coord_name(ds, _LAT_CANDIDATES, "degrees_north")
+    if lon_name is None or lat_name is None:
+        raise ValueError(
+            "Could not infer longitude/latitude coordinates. Pass `lon_name` and `lat_name`."
+        )
+
+    lon_dim, lon_values = _resolve_1d_coord(ds, lon_name)
+    lat_dim, lat_values = _resolve_1d_coord(ds, lat_name)
+    data_vars = _choose_data_vars(
+        ds, var_name=var_name, lon_dim=lon_dim, lat_dim=lat_dim
+    )
+    reports: dict[str, dict[str, Any]] = {}
+    for da in data_vars:
+        per_var_report = _single_ocean_report(
+            da,
+            lon_name=lon_name,
+            lat_name=lat_name,
+            lon_dim=lon_dim,
+            lat_dim=lat_dim,
+            lon_values=lon_values,
+            lat_values=lat_values,
+            time_name=time_name,
+            check_edge_of_map=check_edge_of_map,
+            check_land_ocean_offset=check_land_ocean_offset,
+            check_time_missing=check_time_missing,
+        )
+        reports[str(da.name)] = per_var_report
+
+    if len(reports) == 1:
+        report = next(iter(reports.values()))
+        if resolved_format == "tables":
+            print_pretty_ocean_report(report)
+            return None
+        if resolved_format == "html":
+            html_report = render_pretty_ocean_report_html(report)
+            save_html_report(html_report, report_html_file)
+            maybe_display_html_report(html_report)
+            return html_report
+        return report
+
+    report = {
+        "mode": "all_variables",
+        "checked_variable_count": len(reports),
+        "checked_variables": list(reports.keys()),
+        "reports": reports,
+        "ok": all(bool(per_var.get("ok")) for per_var in reports.values()),
+    }
+    if resolved_format == "tables":
+        for per_var_report in reports.values():
+            print_pretty_ocean_report(per_var_report)
+        return None
+    if resolved_format == "html":
+        html_report = render_pretty_ocean_reports_html(list(reports.values()))
+        save_html_report(html_report, report_html_file)
+        maybe_display_html_report(html_report)
+        return html_report
+    return report
+
+
+def check_time_cover(
+    ds: xr.Dataset,
+    *,
+    var_name: str | None = None,
+    time_name: str | None = "time",
+    report_format: ReportFormat = "tables",
+    report_html_file: str | Path | None = None,
+) -> dict[str, Any] | str | None:
+    """Run time-coverage checks and report missing time-slice ranges."""
+    resolved_format = normalize_report_format(report_format)
+    if report_html_file is not None and resolved_format != "html":
+        raise ValueError("`report_html_file` is only valid when report_format='html'.")
+
+    selected = _choose_time_vars(ds, var_name=var_name, time_name=time_name)
+    reports: dict[str, dict[str, Any]] = {}
+    for da, time_dim in selected:
+        reports[str(da.name)] = _single_time_cover_report(da, time_dim=time_dim)
+
+    if len(reports) == 1:
+        report = next(iter(reports.values()))
+        if resolved_format == "tables":
+            print_pretty_time_cover_report(report)
+            return None
+        if resolved_format == "html":
+            html_report = render_pretty_time_cover_report_html(report)
+            save_html_report(html_report, report_html_file)
+            maybe_display_html_report(html_report)
+            return html_report
+        return report
+
+    report = {
+        "mode": "all_variables",
+        "checked_variable_count": len(reports),
+        "checked_variables": list(reports.keys()),
+        "reports": reports,
+        "ok": all(bool(per_var.get("ok")) for per_var in reports.values()),
+    }
+    if resolved_format == "tables":
+        for per_var_report in reports.values():
+            print_pretty_time_cover_report(per_var_report)
+        return None
+    if resolved_format == "html":
+        html_report = render_pretty_time_cover_reports_html(list(reports.values()))
+        save_html_report(html_report, report_html_file)
+        maybe_display_html_report(html_report)
+        return html_report
     return report

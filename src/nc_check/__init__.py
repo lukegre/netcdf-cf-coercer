@@ -7,7 +7,7 @@ from .core import (
     check_dataset_compliant,
     make_dataset_compliant,
 )
-from .ocean import check_ocean_cover
+from .ocean import check_ocean_cover, check_time_cover
 
 __all__ = [
     "CFCoercerAccessor",
@@ -15,5 +15,6 @@ __all__ = [
     "CF_VERSION",
     "check_dataset_compliant",
     "check_ocean_cover",
+    "check_time_cover",
     "make_dataset_compliant",
 ]

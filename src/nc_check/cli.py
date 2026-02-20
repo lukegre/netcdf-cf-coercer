@@ -19,7 +19,7 @@ def _existing_file(path: str) -> Path:
 def run_check(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="nc-check",
-        description="Run CF checks and print the same report as pretty_print=True.",
+        description="Run CF checks and print a rich table report.",
     )
     parser.add_argument("fname", type=_existing_file, help="Input NetCDF file")
     parser.add_argument(
@@ -34,7 +34,7 @@ def run_check(argv: list[str] | None = None) -> int:
             check_dataset_compliant(
                 ds,
                 conventions=args.conventions,
-                pretty_print=True,
+                report_format="tables",
             )
     except Exception as exc:
         print(f"nc-check: {type(exc).__name__}: {exc}", file=sys.stderr)
