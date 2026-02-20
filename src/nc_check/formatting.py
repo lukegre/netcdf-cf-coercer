@@ -8,6 +8,11 @@ from typing import Literal
 from .report_templates import render_report_document
 
 ReportFormat = Literal["python", "tables", "html"]
+_RICH_BORDER_STYLE = "white"
+_RICH_TITLE_STYLE = "bold white"
+_RICH_HEADER_STYLE = "bold white"
+_RICH_LABEL_STYLE = "bold white"
+_RICH_TEXT_STYLE = "white"
 
 
 def _stringify(value: Any) -> str:
@@ -51,21 +56,54 @@ def _severity_style(severity: str | None) -> str:
     if sev == "FATAL":
         return "bold red"
     if sev == "ERROR":
-        return "bold #e04c41"
+        return "bold bright_red"
     if sev == "WARN":
-        return "dark_orange3"
-    return "black"
+        return "yellow"
+    return _RICH_TEXT_STYLE
 
 
 def _status_style(status: str | None) -> str:
     normalized = (status or "").lower()
     if normalized in {"fail", "error"}:
-        return "bold #e04c41"
+        return "bold bright_red"
     if normalized.startswith("skip"):
-        return "dark_orange3"
+        return "yellow"
     if normalized == "pass":
-        return "green4"
-    return "black"
+        return "bright_green"
+    return _RICH_TEXT_STYLE
+
+
+def _status_sort_key(status: Any) -> int:
+    normalized = _stringify(status).strip().lower()
+    if normalized in {"fail", "failed", "error", "fatal", "false"}:
+        return 0
+    if normalized in {"warn", "warning", "skip", "skipped"} or normalized.startswith(
+        "skip"
+    ):
+        return 1
+    return 2
+
+
+def _severity_sort_key(severity: Any) -> int:
+    normalized = _stringify(severity).strip().upper()
+    if normalized == "FATAL":
+        return 0
+    if normalized == "ERROR":
+        return 1
+    if normalized == "WARN":
+        return 2
+    if normalized == "INFO":
+        return 3
+    return 4
+
+
+def _count_to_int(value: Any) -> int:
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except Exception:
+        return 0
 
 
 def normalize_report_format(report_format: str) -> ReportFormat:
@@ -109,12 +147,35 @@ def _render_cf_report_with_rich(console: Any, report: dict[str, Any]) -> None:
     from rich.table import Table
     from rich.text import Text
 
-    title = Text("CF Compliance Report", style="bold black")
-    console.print(Panel(title, border_style="#cccccc"))
+    title = Text("CF Compliance Report", style=_RICH_TITLE_STYLE)
+    console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
+
+    counts = report.get("counts") or {}
+    fatal = _count_to_int(counts.get("fatal", 0)) if isinstance(counts, dict) else 0
+    error = _count_to_int(counts.get("error", 0)) if isinstance(counts, dict) else 0
+    warn = _count_to_int(counts.get("warn", 0)) if isinstance(counts, dict) else 0
+    non_compliant = fatal + error
+    checker_error = report.get("checker_error")
+    if checker_error:
+        outcome = ("ERROR", "bold bright_red")
+    elif non_compliant > 0:
+        outcome = ("FAILED", "bold bright_red")
+    elif warn > 0:
+        outcome = ("WARNING", "yellow")
+    else:
+        outcome = ("PASSED", "bright_green")
+
+    summary = Table(show_header=False, box=None, pad_edge=False)
+    summary.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    summary.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
+    summary.add_row("Outcome", Text(outcome[0], style=outcome[1]))
+    summary.add_row("Errors + fatals", str(non_compliant))
+    summary.add_row("Warnings", str(warn))
+    console.print(Panel(summary, title="Summary", border_style=_RICH_BORDER_STYLE))
 
     meta = Table(show_header=False, box=None, pad_edge=False)
-    meta.add_column("k", style="bold black")
-    meta.add_column("v", style="black")
+    meta.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    meta.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
     meta.add_row("CF version", _stringify(report.get("cf_version")))
     meta.add_row("Engine", _stringify(report.get("engine")))
     meta.add_row("Engine status", _stringify(report.get("engine_status")))
@@ -122,7 +183,6 @@ def _render_cf_report_with_rich(console: Any, report: dict[str, Any]) -> None:
     conventions_checked = report.get("conventions_checked")
     if isinstance(conventions_checked, list) and conventions_checked:
         meta.add_row("Conventions", ", ".join(str(c) for c in conventions_checked))
-    counts = report.get("counts") or {}
     if isinstance(counts, dict):
         meta.add_row(
             "Counts",
@@ -135,14 +195,25 @@ def _render_cf_report_with_rich(console: Any, report: dict[str, Any]) -> None:
     ) -> None:
         if not rows:
             return
-        table = Table(
-            title=title_text, title_style="bold black", header_style="bold black"
+        sorted_rows = sorted(
+            rows,
+            key=lambda row: (
+                _severity_sort_key(row[2]),
+                row[0].lower(),
+                row[1].lower(),
+                row[3].lower(),
+            ),
         )
-        table.add_column("Scope", style="black")
-        table.add_column("Convention", style="black")
-        table.add_column("Severity", style="black")
-        table.add_column("Detail", style="black")
-        for scope, convention, severity, detail in rows:
+        table = Table(
+            title=title_text,
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
+        )
+        table.add_column("Scope", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Convention", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Severity", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Detail", style=_RICH_TEXT_STYLE, justify="left")
+        for scope, convention, severity, detail in sorted_rows:
             sev_text = Text(severity, style=_severity_style(severity))
             table.add_row(scope, convention, sev_text, detail)
         console.print(table)
@@ -196,11 +267,13 @@ def _render_cf_report_with_rich(console: Any, report: dict[str, Any]) -> None:
     if isinstance(suggestions, dict) and suggestions:
         suggestion_table = Table(
             title="Suggested Improvements",
-            title_style="bold black",
-            header_style="bold black",
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        suggestion_table.add_column("Variable", style="black")
-        suggestion_table.add_column("Suggestion", style="black")
+        suggestion_table.add_column("Variable", style=_RICH_TEXT_STYLE, justify="left")
+        suggestion_table.add_column(
+            "Suggestion", style=_RICH_TEXT_STYLE, justify="left"
+        )
         for var_name, suggestion in suggestions.items():
             suggestion_table.add_row(str(var_name), _stringify(suggestion))
         console.print(suggestion_table)
@@ -208,14 +281,15 @@ def _render_cf_report_with_rich(console: Any, report: dict[str, Any]) -> None:
     notes = report.get("notes") or []
     if isinstance(notes, list) and notes:
         note_table = Table(
-            title="Notes", title_style="bold black", header_style="bold black"
+            title="Notes",
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        note_table.add_column("Note", style="black")
+        note_table.add_column("Note", style=_RICH_TEXT_STYLE, justify="left")
         for note in notes:
             note_table.add_row(_stringify(note))
         console.print(note_table)
 
-    checker_error = report.get("checker_error")
     if checker_error:
         error_text = _stringify(checker_error)
         console.print(Panel(error_text, title="Checker Error", border_style="red"))
@@ -226,13 +300,77 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
     from rich.table import Table
     from rich.text import Text
 
-    title = Text("Ocean Coverage Report", style="bold black")
-    console.print(Panel(title, border_style="#cccccc"))
+    title = Text("Ocean Coverage Report", style=_RICH_TITLE_STYLE)
+    console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
+
+    edge = (
+        report.get("edge_of_map") if isinstance(report.get("edge_of_map"), dict) else {}
+    )
+    if not edge and isinstance(report.get("edge_sliver"), dict):
+        edge = report.get("edge_sliver")
+    offset = (
+        report.get("land_ocean_offset")
+        if isinstance(report.get("land_ocean_offset"), dict)
+        else {}
+    )
+    time_missing = (
+        report.get("time_missing")
+        if isinstance(report.get("time_missing"), dict)
+        else {}
+    )
+
+    summary_rows: list[tuple[str, str, str]] = []
+    edge_status = _stringify(edge.get("status"))
+    summary_rows.append(
+        (
+            "edge_of_map",
+            edge_status,
+            f"missing_longitudes={_stringify(edge.get('missing_longitude_count', 0))}",
+        )
+    )
+    offset_status = _stringify(offset.get("status"))
+    summary_rows.append(
+        (
+            "land_ocean_offset",
+            offset_status,
+            f"mismatches={_stringify(offset.get('mismatch_count', 0))}",
+        )
+    )
+    if time_missing:
+        time_status = _stringify(time_missing.get("status"))
+        summary_rows.append(
+            (
+                "time_missing",
+                time_status,
+                f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
+            )
+        )
+
+    sorted_summary_rows = sorted(summary_rows, key=lambda row: _status_sort_key(row[1]))
+    failing_checks = sum(
+        1 for _, status, _ in sorted_summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in sorted_summary_rows if _status_kind(status) == "warn"
+    )
+    summary_head = Table(show_header=False, box=None, pad_edge=False)
+    summary_head.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    summary_head.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
+    summary_head.add_row(
+        "Overall",
+        Text(
+            "PASSED" if bool(report.get("ok")) else "FAILED",
+            style=_status_style("pass" if bool(report.get("ok")) else "fail"),
+        ),
+    )
+    summary_head.add_row("Failing checks", str(failing_checks))
+    summary_head.add_row("Warnings/skips", str(warning_checks))
+    console.print(Panel(summary_head, title="Summary", border_style=_RICH_BORDER_STYLE))
 
     grid = report.get("grid") if isinstance(report.get("grid"), dict) else {}
     meta = Table(show_header=False, box=None, pad_edge=False)
-    meta.add_column("k", style="bold black")
-    meta.add_column("v", style="black")
+    meta.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    meta.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
     meta.add_row("Variable", _stringify(report.get("variable")))
     meta.add_row(
         "Longitude",
@@ -252,65 +390,32 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
         "Lat range",
         f"{_stringify(grid.get('latitude_min'))} .. {_stringify(grid.get('latitude_max'))}",
     )
-    meta.add_row("Overall OK", _stringify(report.get("ok")))
     console.print(meta)
 
     summary = Table(
         title="Check Summary",
-        title_style="bold black",
-        header_style="bold black",
+        title_style=_RICH_TITLE_STYLE,
+        header_style=_RICH_HEADER_STYLE,
     )
-    summary.add_column("Check", style="black")
-    summary.add_column("Status", style="black")
-    summary.add_column("Detail", style="black")
-
-    edge = (
-        report.get("edge_of_map") if isinstance(report.get("edge_of_map"), dict) else {}
-    )
-    if not edge and isinstance(report.get("edge_sliver"), dict):
-        edge = report.get("edge_sliver")
-    offset = (
-        report.get("land_ocean_offset")
-        if isinstance(report.get("land_ocean_offset"), dict)
-        else {}
-    )
-    time_missing = (
-        report.get("time_missing")
-        if isinstance(report.get("time_missing"), dict)
-        else {}
-    )
-
-    edge_status = _stringify(edge.get("status"))
-    summary.add_row(
-        "edge_of_map",
-        Text(edge_status, style=_status_style(edge_status)),
-        f"missing_longitudes={_stringify(edge.get('missing_longitude_count', 0))}",
-    )
-    offset_status = _stringify(offset.get("status"))
-    summary.add_row(
-        "land_ocean_offset",
-        Text(offset_status, style=_status_style(offset_status)),
-        f"mismatches={_stringify(offset.get('mismatch_count', 0))}",
-    )
-    if time_missing:
-        time_status = _stringify(time_missing.get("status"))
-        summary.add_row(
-            "time_missing",
-            Text(time_status, style=_status_style(time_status)),
-            f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
-        )
+    summary.add_column("Check", style=_RICH_TEXT_STYLE, justify="left")
+    summary.add_column("Status", style=_RICH_TEXT_STYLE, justify="left")
+    summary.add_column("Detail", style=_RICH_TEXT_STYLE, justify="left")
+    for check_name, status, detail in sorted_summary_rows:
+        summary.add_row(check_name, Text(status, style=_status_style(status)), detail)
     console.print(summary)
 
     def _print_ranges(title_text: str, ranges: Any) -> None:
         if not isinstance(ranges, list) or not ranges:
             return
         table = Table(
-            title=title_text, title_style="bold black", header_style="bold black"
+            title=title_text,
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        table.add_column("Start", style="black")
-        table.add_column("End", style="black")
-        table.add_column("Start idx", style="black")
-        table.add_column("End idx", style="black")
+        table.add_column("Start", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("End", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Start idx", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("End idx", style=_RICH_TEXT_STYLE, justify="left")
         for entry in ranges:
             if not isinstance(entry, dict):
                 continue
@@ -326,10 +431,12 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
         if not isinstance(ranges, list) or not ranges:
             return
         table = Table(
-            title=title_text, title_style="bold black", header_style="bold black"
+            title=title_text,
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        table.add_column("Start", style="black")
-        table.add_column("End", style="black")
+        table.add_column("Start", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("End", style=_RICH_TEXT_STYLE, justify="left")
         for entry in ranges:
             if not isinstance(entry, dict):
                 continue
@@ -351,13 +458,15 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
         if not isinstance(mismatches, list) or not mismatches:
             return
         table = Table(
-            title=title_text, title_style="bold black", header_style="bold black"
+            title=title_text,
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        table.add_column("Point", style="black")
-        table.add_column("Requested", style="black")
-        table.add_column("Actual", style="black")
-        table.add_column("Observed missing", style="black")
-        table.add_column("Expected missing", style="black")
+        table.add_column("Point", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Requested", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Actual", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Observed missing", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Expected missing", style=_RICH_TEXT_STYLE, justify="left")
         for entry in mismatches:
             if not isinstance(entry, dict):
                 continue
@@ -375,9 +484,11 @@ def _render_ocean_report_with_rich(console: Any, report: dict[str, Any]) -> None
 
     if "note" in offset:
         note_table = Table(
-            title="Notes", title_style="bold black", header_style="bold black"
+            title="Notes",
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        note_table.add_column("Note", style="black")
+        note_table.add_column("Note", style=_RICH_TEXT_STYLE, justify="left")
         note_table.add_row(_stringify(offset.get("note")))
         console.print(note_table)
 
@@ -387,31 +498,45 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
     from rich.table import Table
     from rich.text import Text
 
-    title = Text("Time Coverage Report", style="bold black")
-    console.print(Panel(title, border_style="#cccccc"))
-
-    meta = Table(show_header=False, box=None, pad_edge=False)
-    meta.add_column("k", style="bold black")
-    meta.add_column("v", style="black")
-    meta.add_row("Variable", _stringify(report.get("variable")))
-    meta.add_row("Time dim", _stringify(report.get("time_dim")))
-    meta.add_row("Overall OK", _stringify(report.get("ok")))
-    console.print(meta)
+    title = Text("Time Coverage Report", style=_RICH_TITLE_STYLE)
+    console.print(Panel(title, border_style=_RICH_BORDER_STYLE))
 
     time_missing = (
         report.get("time_missing")
         if isinstance(report.get("time_missing"), dict)
         else {}
     )
+    status = _stringify(time_missing.get("status"))
+    status_kind = _status_kind(status)
+    summary_head = Table(show_header=False, box=None, pad_edge=False)
+    summary_head.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    summary_head.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
+    summary_head.add_row(
+        "Overall",
+        Text(
+            "PASSED" if bool(report.get("ok")) else "FAILED",
+            style=_status_style("pass" if bool(report.get("ok")) else "fail"),
+        ),
+    )
+    summary_head.add_row("Failing checks", "1" if status_kind == "fail" else "0")
+    summary_head.add_row("Warnings/skips", "1" if status_kind == "warn" else "0")
+    console.print(Panel(summary_head, title="Summary", border_style=_RICH_BORDER_STYLE))
+
+    meta = Table(show_header=False, box=None, pad_edge=False)
+    meta.add_column("k", style=_RICH_LABEL_STYLE, justify="left")
+    meta.add_column("v", style=_RICH_TEXT_STYLE, justify="left")
+    meta.add_row("Variable", _stringify(report.get("variable")))
+    meta.add_row("Time dim", _stringify(report.get("time_dim")))
+    console.print(meta)
+
     summary = Table(
         title="Check Summary",
-        title_style="bold black",
-        header_style="bold black",
+        title_style=_RICH_TITLE_STYLE,
+        header_style=_RICH_HEADER_STYLE,
     )
-    summary.add_column("Check", style="black")
-    summary.add_column("Status", style="black")
-    summary.add_column("Detail", style="black")
-    status = _stringify(time_missing.get("status"))
+    summary.add_column("Check", style=_RICH_TEXT_STYLE, justify="left")
+    summary.add_column("Status", style=_RICH_TEXT_STYLE, justify="left")
+    summary.add_column("Detail", style=_RICH_TEXT_STYLE, justify="left")
     summary.add_row(
         "time_missing",
         Text(status, style=_status_style(status)),
@@ -423,13 +548,13 @@ def _render_time_cover_report_with_rich(console: Any, report: dict[str, Any]) ->
     if isinstance(ranges, list) and ranges:
         table = Table(
             title="Missing Time Slice Ranges",
-            title_style="bold black",
-            header_style="bold black",
+            title_style=_RICH_TITLE_STYLE,
+            header_style=_RICH_HEADER_STYLE,
         )
-        table.add_column("Start", style="black")
-        table.add_column("End", style="black")
-        table.add_column("Start idx", style="black")
-        table.add_column("End idx", style="black")
+        table.add_column("Start", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("End", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("Start idx", style=_RICH_TEXT_STYLE, justify="left")
+        table.add_column("End idx", style=_RICH_TEXT_STYLE, justify="left")
         for entry in ranges:
             if not isinstance(entry, dict):
                 continue
@@ -495,7 +620,7 @@ def _html_status_badge(status: Any) -> str:
             if status
             else "bg-danger-subtle text-danger-emphasis border border-danger-subtle"
         )
-        return f"<span class='badge rounded-pill {badge_class}'>{escape(text)}</span>"
+        return f"<span class='badge report-badge rounded-pill {badge_class}'>{escape(text)}</span>"
 
     normalized = _stringify(status).strip().lower()
     if normalized in {"pass", "passed", "ok", "success", "true"}:
@@ -513,7 +638,7 @@ def _html_status_badge(status: Any) -> str:
         badge_class = (
             "bg-warning-subtle text-warning-emphasis border border-warning-subtle"
         )
-    return f"<span class='badge rounded-pill {badge_class}'>{escape(text)}</span>"
+    return f"<span class='badge report-badge rounded-pill {badge_class}'>{escape(text)}</span>"
 
 
 def _html_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -529,20 +654,27 @@ def _html_table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _html_summary_table(rows: list[tuple[str, Any]]) -> str:
-    table_rows: list[list[str]] = []
+    kv_rows: list[str] = []
     for label, value in rows:
-        label_text = escape(label)
+        label_text = escape(_stringify(label))
         key_norm = label.strip().lower()
         if isinstance(value, bool) or "status" in key_norm or key_norm.endswith(" ok"):
             value_html = _html_status_badge(value)
+        elif isinstance(value, (dict, list)):
+            value_html = f"<pre>{escape(to_yaml_like(value))}</pre>"
         else:
             value_html = escape(_stringify(value))
-        table_rows.append([label_text, value_html])
+        kv_rows.append(
+            "<div class='kv-row'>"
+            f"<dt class='kv-label'>{label_text}</dt>"
+            f"<dd class='kv-value'>{value_html}</dd>"
+            "</div>"
+        )
     return (
         "<section class='summary-table-wrap'>"
-        + _html_table(["Field", "Value"], table_rows).replace(
-            "report-table", "report-table summary-table"
-        )
+        "<dl class='summary-table summary-kv'>"
+        + "".join(kv_rows)
+        + "</dl>"
         + "</section>"
     )
 
@@ -604,7 +736,7 @@ def _html_severity_badge(severity: Any) -> str:
         badge_class = (
             "bg-warning-subtle text-warning-emphasis border border-warning-subtle"
         )
-    return f"<span class='badge rounded-pill {badge_class}'>{escape(text)}</span>"
+    return f"<span class='badge report-badge rounded-pill {badge_class}'>{escape(text)}</span>"
 
 
 def _html_cell_value(value: Any) -> str:
@@ -613,8 +745,95 @@ def _html_cell_value(value: Any) -> str:
     return escape(_stringify(value))
 
 
-def _cf_finding_rows(report: dict[str, Any], scope: str) -> list[list[str]]:
-    rows: list[list[str]] = []
+def _status_kind(status: Any) -> str:
+    normalized = _stringify(status).strip().lower()
+    if normalized in {"pass", "passed", "ok", "success", "true"}:
+        return "pass"
+    if normalized in {"fail", "failed", "error", "fatal", "false"}:
+        return "fail"
+    return "warn"
+
+
+def _html_stat_strip(items: list[tuple[str, Any, str | None]]) -> str:
+    cards: list[str] = []
+    for label, value, status in items:
+        classes = "stat-card"
+        if status in {"fail", "warn"}:
+            classes += f" status-{status}"
+        cards.append(
+            f"<article class='{classes}'>"
+            f"<span class='stat-label'>{escape(_stringify(label))}</span>"
+            f"<span class='stat-value'>{escape(_stringify(value))}</span>"
+            "</article>"
+        )
+    return "<section class='stat-strip'>" + "".join(cards) + "</section>"
+
+
+def _html_issue_cards(findings: list[dict[str, str]]) -> str:
+    if not findings:
+        return "<p class='issue-empty'>No findings reported.</p>"
+
+    rows: list[str] = []
+    for finding in findings:
+        scope = _stringify(finding.get("scope", "n/a"))
+        convention = _stringify(finding.get("convention", "n/a"))
+        severity = _stringify(finding.get("severity", "info")).upper()
+        detail = _stringify(finding.get("detail", ""))
+        rows.append(
+            "<div class='issue-row issue-card'>"
+            "<div class='issue-cell issue-status'>"
+            f"{_html_severity_badge(severity)}"
+            "</div>"
+            "<div class='issue-cell issue-test'>"
+            f"<p class='issue-scope'>{escape(scope)}</p>"
+            f"<p class='issue-convention'>Convention: {escape(convention)}</p>"
+            "</div>"
+            f"<p class='issue-cell issue-detail'>{escape(detail)}</p>"
+            "</div>"
+        )
+    return (
+        "<section class='issue-list'>"
+        "<div class='issue-head'>"
+        "<span class='issue-head-status'>Status</span>"
+        "<span class='issue-head-test'>Test Info</span>"
+        "<span class='issue-head-desc'>Description</span>"
+        "</div>" + "".join(rows) + "</section>"
+    )
+
+
+def _html_check_summary_table(rows: list[tuple[str, Any, str]]) -> str:
+    if not rows:
+        return "<p class='issue-empty'>No checks were run.</p>"
+
+    row_html = "".join(
+        (
+            "<div class='issue-row issue-card'>"
+            "<div class='issue-cell issue-status'>"
+            f"{_html_status_badge(status)}"
+            "</div>"
+            "<div class='issue-cell issue-test'>"
+            f"<p class='issue-scope'>{escape(_stringify(check_name))}</p>"
+            "</div>"
+            f"<p class='issue-cell issue-detail'>{escape(_stringify(detail))}</p>"
+            "</div>"
+        )
+        for check_name, status, detail in rows
+    )
+
+    return (
+        "<section class='check-summary-block issue-list'>"
+        "<div class='issue-head'>"
+        "<span class='issue-head-status'>Status</span>"
+        "<span class='issue-head-test'>Test Info</span>"
+        "<span class='issue-head-desc'>Description</span>"
+        "</div>"
+        f"{row_html}"
+        "</section>"
+    )
+
+
+def _cf_finding_rows(report: dict[str, Any], scope: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
     if scope == "global":
         for item in report.get("global", []) or []:
             if isinstance(item, dict):
@@ -626,12 +845,12 @@ def _cf_finding_rows(report: dict[str, Any], scope: str) -> list[list[str]]:
                 severity = "info"
                 detail = _stringify(item)
             rows.append(
-                [
-                    escape("global"),
-                    escape(convention),
-                    _html_severity_badge(severity),
-                    escape(detail),
-                ]
+                {
+                    "scope": "global",
+                    "convention": convention,
+                    "severity": severity,
+                    "detail": detail,
+                }
             )
         return rows
 
@@ -653,12 +872,12 @@ def _cf_finding_rows(report: dict[str, Any], scope: str) -> list[list[str]]:
                 severity = "info"
                 detail = _stringify(item)
             rows.append(
-                [
-                    escape(_stringify(entry_scope)),
-                    escape(convention),
-                    _html_severity_badge(severity),
-                    escape(detail),
-                ]
+                {
+                    "scope": _stringify(entry_scope),
+                    "convention": convention,
+                    "severity": severity,
+                    "detail": detail,
+                }
             )
     return rows
 
@@ -671,6 +890,18 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
         if isinstance(conventions, list) and conventions
         else "n/a"
     )
+    variable_findings = report.get("variables")
+    variable_count = (
+        len(variable_findings) if isinstance(variable_findings, dict) else 0
+    )
+
+    fatal_raw = counts.get("fatal", 0)
+    error_raw = counts.get("error", 0)
+    warn_raw = counts.get("warn", 0)
+    fatal_count = fatal_raw if isinstance(fatal_raw, int) else 0
+    error_count = error_raw if isinstance(error_raw, int) else 0
+    warn_count = warn_raw if isinstance(warn_raw, int) else 0
+    problem_count = fatal_count + error_count
 
     meta = _html_summary_table(
         [
@@ -692,20 +923,32 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
         ]
     )
 
+    stats = _html_stat_strip(
+        [
+            ("Variables checked", variable_count, None),
+            ("Errors + fatals", problem_count, "fail" if problem_count > 0 else None),
+            ("Warnings", warn_count, "warn" if warn_count > 0 else None),
+            (
+                "Engine status",
+                _stringify(report.get("engine_status")).upper(),
+                _status_kind(report.get("engine_status")),
+            ),
+        ]
+    )
+
     sections: list[str] = []
     section_defs = [
-        ("Global Findings", _cf_finding_rows(report, "global"), True),
-        ("Coordinate Findings", _cf_finding_rows(report, "coordinates"), False),
-        ("Variable Findings", _cf_finding_rows(report, "variables"), False),
+        ("Global Findings", _cf_finding_rows(report, "global")),
+        ("Coordinate Findings", _cf_finding_rows(report, "coordinates")),
+        ("Variable Findings", _cf_finding_rows(report, "variables")),
     ]
-    for title, rows, open_by_default in section_defs:
+    for title, rows in section_defs:
         if not rows:
             continue
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 title,
-                _html_table(["Scope", "Convention", "Severity", "Detail"], rows),
-                open_by_default=open_by_default,
+                _html_issue_cards(rows),
             )
         )
 
@@ -716,7 +959,7 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
             for var_name, suggestion in suggestions.items()
         ]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Suggested Improvements",
                 _html_table(["Variable", "Suggestion"], rows),
             )
@@ -726,7 +969,7 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
     if isinstance(notes, list) and notes:
         rows = [[escape(_stringify(note))] for note in notes]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Notes",
                 _html_table(["Note"], rows),
             )
@@ -735,7 +978,7 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
     checker_error = report.get("checker_error")
     if checker_error is not None:
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Checker Error",
                 f"<pre class='mb-0'>{escape(_stringify(checker_error))}</pre>",
             )
@@ -743,14 +986,19 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
 
     if not sections:
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Findings",
-                "<p class='mb-0'>No findings were reported.</p>",
-                open_by_default=True,
+                "<p class='mb-0 issue-empty'>No findings were reported.</p>",
             )
         )
 
-    return meta + "<section class='section-stack'>" + "".join(sections) + "</section>"
+    return (
+        stats
+        + meta
+        + "<section class='section-stack'>"
+        + "".join(sections)
+        + "</section>"
+    )
 
 
 def render_pretty_report_html(report: Any) -> str:
@@ -810,35 +1058,50 @@ def _ocean_report_sections(report: dict[str, Any]) -> str:
         ]
     )
 
-    summary_rows = [
-        [
-            escape("edge_of_map"),
-            _html_status_badge(edge.get("status")),
-            escape(
-                f"missing_longitudes={_stringify(edge.get('missing_longitude_count', 0))}"
-            ),
-        ],
-        [
-            escape("land_ocean_offset"),
-            _html_status_badge(offset.get("status")),
-            escape(f"mismatches={_stringify(offset.get('mismatch_count', 0))}"),
-        ],
+    summary_rows: list[tuple[str, Any, str]] = [
+        (
+            "edge_of_map",
+            edge.get("status"),
+            f"missing_longitudes={_stringify(edge.get('missing_longitude_count', 0))}",
+        ),
+        (
+            "land_ocean_offset",
+            offset.get("status"),
+            f"mismatches={_stringify(offset.get('mismatch_count', 0))}",
+        ),
     ]
     if time_missing:
         summary_rows.append(
-            [
-                escape("time_missing"),
-                _html_status_badge(time_missing.get("status")),
-                escape(
-                    f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}"
-                ),
-            ]
+            (
+                "time_missing",
+                time_missing.get("status"),
+                f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
+            )
         )
+
+    failing_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "fail"
+    )
+    warning_checks = sum(
+        1 for _, status, _ in summary_rows if _status_kind(status) == "warn"
+    )
+    stats = _html_stat_strip(
+        [
+            ("Checks run", len(summary_rows), None),
+            ("Failing checks", failing_checks, "fail" if failing_checks > 0 else None),
+            ("Warnings/skips", warning_checks, "warn" if warning_checks > 0 else None),
+            (
+                "Overall",
+                "PASSED" if bool(report.get("ok")) else "FAILED",
+                _status_kind(report.get("ok")),
+            ),
+        ]
+    )
 
     sections: list[str] = [
         _html_static_section(
             "Check Summary",
-            _html_table(["Check", "Status", "Detail"], summary_rows),
+            _html_check_summary_table(summary_rows),
         )
     ]
 
@@ -853,7 +1116,7 @@ def _ocean_report_sections(report: dict[str, Any]) -> str:
             if isinstance(entry, dict)
         ]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Edge Of Map Missing Longitude Ranges",
                 _html_table(["Start", "End"], lon_rows),
             )
@@ -872,7 +1135,7 @@ def _ocean_report_sections(report: dict[str, Any]) -> str:
             if isinstance(entry, dict)
         ]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Time Missing Slice Ranges",
                 _html_table(["Start", "End", "Start idx", "End idx"], time_rows),
             )
@@ -901,7 +1164,7 @@ def _ocean_report_sections(report: dict[str, Any]) -> str:
             if isinstance(entry, dict)
         ]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 title,
                 _html_table(
                     [
@@ -919,12 +1182,18 @@ def _ocean_report_sections(report: dict[str, Any]) -> str:
     note = offset.get("note")
     if note is not None:
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Notes", f"<p class='mb-0'>{escape(_stringify(note))}</p>"
             )
         )
 
-    return meta + "<section class='section-stack'>" + "".join(sections) + "</section>"
+    return (
+        stats
+        + meta
+        + "<section class='section-stack'>"
+        + "".join(sections)
+        + "</section>"
+    )
 
 
 def _time_cover_report_sections(report: dict[str, Any]) -> str:
@@ -942,19 +1211,38 @@ def _time_cover_report_sections(report: dict[str, Any]) -> str:
         ]
     )
 
-    summary_rows = [
+    summary_rows: list[tuple[str, Any, str]] = [
+        (
+            "time_missing",
+            time_missing.get("status"),
+            f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}",
+        )
+    ]
+    status_kind = _status_kind(time_missing.get("status"))
+    stats = _html_stat_strip(
         [
-            escape("time_missing"),
-            _html_status_badge(time_missing.get("status")),
-            escape(
-                f"missing_slices={_stringify(time_missing.get('missing_slice_count', 0))}"
+            ("Checks run", len(summary_rows), None),
+            (
+                "Failing checks",
+                1 if status_kind == "fail" else 0,
+                "fail" if status_kind == "fail" else None,
+            ),
+            (
+                "Warnings/skips",
+                1 if status_kind == "warn" else 0,
+                "warn" if status_kind == "warn" else None,
+            ),
+            (
+                "Overall",
+                "PASSED" if bool(report.get("ok")) else "FAILED",
+                _status_kind(report.get("ok")),
             ),
         ]
-    ]
+    )
     sections = [
         _html_static_section(
             "Check Summary",
-            _html_table(["Check", "Status", "Detail"], summary_rows),
+            _html_check_summary_table(summary_rows),
         )
     ]
 
@@ -971,13 +1259,19 @@ def _time_cover_report_sections(report: dict[str, Any]) -> str:
             if isinstance(entry, dict)
         ]
         sections.append(
-            _html_details_section(
+            _html_static_section(
                 "Missing Time Slice Ranges",
                 _html_table(["Start", "End", "Start idx", "End idx"], rows),
             )
         )
 
-    return meta + "<section class='section-stack'>" + "".join(sections) + "</section>"
+    return (
+        stats
+        + meta
+        + "<section class='section-stack'>"
+        + "".join(sections)
+        + "</section>"
+    )
 
 
 def render_pretty_ocean_report_html(report: Any) -> str:

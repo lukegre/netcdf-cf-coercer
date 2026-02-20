@@ -260,7 +260,8 @@ def test_html_report_can_be_saved(tmp_path) -> None:
 
     assert isinstance(html, str)
     assert "CF Compliance Report" in html
-    assert "<details class='report-section'" in html
+    assert "<details class='report-section'" not in html
+    assert "<section class='report-section static-section'>" in html
     assert "Notes" in html
     assert "bootstrap@5" in html
     assert "summary-table" in html
@@ -284,7 +285,8 @@ def test_cf_alias_accepts_html_report_format() -> None:
 
     assert isinstance(html, str)
     assert "CF Compliance Report" in html
-    assert "<details class='report-section'" in html
+    assert "<details class='report-section'" not in html
+    assert "<section class='report-section static-section'>" in html
     assert "summary-table" in html
     assert "WARNING" in html
 

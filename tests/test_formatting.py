@@ -140,7 +140,58 @@ def test_print_pretty_time_cover_report_shows_summary(capsys) -> None:
     assert "Missing Time Slice Ranges" in out
 
 
-def test_render_pretty_report_html_uses_collapsible_bootstrap_layout() -> None:
+def test_print_pretty_report_summary_and_severity_priority(capsys) -> None:
+    formatting.print_pretty_report(
+        {
+            "cf_version": "CF-1.12",
+            "engine": "cfchecker",
+            "engine_status": "ok",
+            "check_method": "cfchecker",
+            "counts": {"fatal": 0, "error": 1, "warn": 1},
+            "global": [
+                {"severity": "WARN", "message": "warn-detail"},
+                {"severity": "ERROR", "message": "error-detail"},
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "Summary" in out
+    assert out.find("Errors + fatals") < out.find("CF version")
+    assert out.find("error-detail") < out.find("warn-detail")
+
+
+def test_print_pretty_ocean_report_sorts_failing_checks_first(capsys) -> None:
+    formatting.print_pretty_ocean_report(
+        {
+            "variable": "sst",
+            "ok": False,
+            "grid": {
+                "lon_name": "lon",
+                "lon_dim": "lon",
+                "lat_name": "lat",
+                "lat_dim": "lat",
+                "time_dim": "time",
+                "longitude_convention": "0_360",
+                "longitude_min": 0.0,
+                "longitude_max": 359.0,
+                "latitude_min": -89.0,
+                "latitude_max": 89.0,
+            },
+            "edge_of_map": {"status": "pass", "missing_longitude_count": 0},
+            "land_ocean_offset": {"status": "fail", "mismatch_count": 3},
+            "time_missing": {"status": "skipped", "missing_slice_count": 0},
+        }
+    )
+    out = capsys.readouterr().out
+
+    assert "Summary" in out
+    assert out.find("Failing checks") < out.find("Variable")
+    assert out.find("land_ocean_offset") < out.find("time_missing")
+    assert out.find("time_missing") < out.find("edge_of_map")
+
+
+def test_render_pretty_report_html_uses_flat_section_layout() -> None:
     html = formatting.render_pretty_report_html(
         {
             "cf_version": "CF-1.12",
@@ -163,9 +214,11 @@ def test_render_pretty_report_html_uses_collapsible_bootstrap_layout() -> None:
     )
 
     assert "CF Compliance Report" in html
-    assert "<details class='report-section'" in html
+    assert "<details class='report-section'" not in html
+    assert "<section class='report-section static-section'>" in html
     assert "Global Findings" in html
     assert "Variable Findings" in html
+    assert "issue-card" in html
     assert "bootstrap@5" in html
     assert "summary-table" in html
     assert "kv-grid" not in html

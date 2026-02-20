@@ -31,6 +31,28 @@ You can request rich table reports printed to stdout:
 ds.check.compliance(report_format="tables")
 ```
 
+CLI usage:
+
+```bash
+# Prints readable rich tables to stdout (default behavior)
+nc-check input.nc
+
+# Explicit check modes
+nc-check compliance input.nc
+nc-check ocean-cover input.nc
+nc-check time-cover input.nc
+nc-check all input.nc
+
+# Saves an HTML report beside input.nc as input_report.html
+nc-check input.nc --save-report
+
+# With "all", saves three reports:
+# input_report.html
+# input_ocean_cover_report.html
+# input_time_cover_report.html
+nc-check all input.nc --save-report
+```
+
 For notebooks, use HTML output and optionally save it:
 
 ```python

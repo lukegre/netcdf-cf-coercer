@@ -129,7 +129,145 @@ body{
 }
 
 .summary-table-wrap{
-  margin:.95rem 0 1.1rem 0;
+  margin:.9rem 0 1rem 0;
+}
+
+.summary-kv{
+  margin:0;
+  padding:0;
+  display:grid;
+  grid-template-columns:minmax(160px, 240px) 1fr;
+  gap:.38rem .95rem;
+}
+
+.summary-kv .kv-row{
+  display:contents;
+}
+
+.summary-kv .kv-label{
+  margin:0;
+  font-size:.86rem;
+  text-transform:uppercase;
+  letter-spacing:.035em;
+  color:#4d6570;
+  font-weight:650;
+}
+
+.summary-kv .kv-value{
+  margin:0;
+  color:#12262f;
+  min-width:0;
+}
+
+.summary-kv .kv-value pre{
+  margin:0;
+}
+
+.stat-strip{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:.52rem;
+  margin:.25rem 0 .8rem 0;
+}
+
+.stat-card{
+  border:1px solid #cfdbd7;
+  border-radius:10px;
+  background:#f9fcfb;
+  padding:.55rem .62rem;
+}
+
+.stat-card .stat-label{
+  display:block;
+  color:#526975;
+  font-size:.76rem;
+  letter-spacing:.038em;
+  text-transform:uppercase;
+  margin-bottom:.1rem;
+}
+
+.stat-card .stat-value{
+  color:#10222b;
+  font-size:1rem;
+  font-weight:700;
+}
+
+.stat-card.status-fail{
+  border-color:#f1c3c3;
+  background:#fff6f6;
+}
+
+.stat-card.status-warn{
+  border-color:#f3dfad;
+  background:#fffaf1;
+}
+
+.issue-list{
+  display:grid;
+  gap:.38rem;
+}
+
+.issue-head,
+.issue-row{
+  display:grid;
+  grid-template-columns:minmax(112px, 150px) minmax(170px, 260px) 1fr;
+  gap:.65rem;
+  align-items:start;
+}
+
+.issue-head{
+  padding:0 .2rem;
+}
+
+.issue-head span{
+  color:#4e6671;
+  font-size:.73rem;
+  letter-spacing:.038em;
+  text-transform:uppercase;
+  font-weight:700;
+}
+
+.issue-card{
+  border:1px solid #d5e1dd;
+  border-radius:10px;
+  padding:.58rem .68rem;
+  background:#fbfdfc;
+}
+
+.issue-cell{
+  min-width:0;
+}
+
+.issue-status{
+  display:flex;
+  align-items:center;
+  align-self:center;
+}
+
+.issue-scope{
+  margin:0 0 .2rem 0;
+  font-weight:700;
+  color:#20353f;
+}
+
+.issue-convention{
+  margin:0;
+  color:#526671;
+  font-size:.84rem;
+}
+
+.issue-detail{
+  color:#142932;
+  margin:0;
+}
+
+.issue-empty{
+  margin:0;
+  color:#4b636d;
+}
+
+.check-summary-block{
+  margin:0;
 }
 
 .report-section{
@@ -162,6 +300,13 @@ body{
 .report-section .summary-badge{
   display:inline-flex;
   align-items:center;
+}
+
+.report-badge{
+  font-size:.78rem;
+  font-weight:700;
+  letter-spacing:.02em;
+  padding:.42rem .7rem;
 }
 
 .report-section .section-title{
@@ -206,12 +351,6 @@ body{
 
 .summary-table thead th{
   font-size:.76rem;
-}
-
-.summary-table td:first-child{
-  font-weight:650;
-  color:#13262f;
-  width:30%;
 }
 
 .variable-report > summary{
@@ -263,7 +402,33 @@ body{
   }
 
   .summary-table td:first-child{
-    width:42%;
+    width:auto;
+  }
+
+  .summary-kv{
+    grid-template-columns:1fr;
+    gap:.16rem;
+  }
+
+  .summary-kv .kv-label{
+    font-size:.74rem;
+  }
+
+  .summary-kv .kv-value{
+    margin-bottom:.33rem;
+  }
+
+  .stat-strip{
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+  }
+
+  .issue-head{
+    display:none;
+  }
+
+  .issue-row{
+    grid-template-columns:1fr;
+    gap:.38rem;
   }
 }
 
