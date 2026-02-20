@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from netcdf_cf_coercer import core
+from nc_check import core
 
 dask = pytest.importorskip("dask.array")
 netCDF4 = pytest.importorskip("netCDF4")

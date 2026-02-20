@@ -1,5 +1,5 @@
 [project]
-name = "netcdf-cf-coercer"
+name = "nc-check"
 version = "0.1.3"
 description = "Prepare xarray Datasets for CF-1.12 compliant NetCDF output"
 readme = "README.md"
@@ -30,8 +30,8 @@ requires = ["uv_build>=0.9.9,<0.10.0"]
 build-backend = "uv_build"
 
 [project.scripts]
-nc-cf-check = "netcdf_cf_coercer.cli:main_check"
-nc-cf-comply = "netcdf_cf_coercer.cli:main_comply"
+nc-check = "nc_check.cli:main_check"
+nc-comply = "nc_check.cli:main_comply"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import xarray as xr
 
-from netcdf_cf_coercer import cli
+from nc_check import cli
 
 
 def test_run_check_uses_pretty_print_mode(monkeypatch, tmp_path, capsys) -> None:

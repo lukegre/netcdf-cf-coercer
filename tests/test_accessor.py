@@ -2,9 +2,9 @@ import numpy as np
 import xarray as xr
 from pathlib import Path
 
-import netcdf_cf_coercer  # noqa: F401
-from netcdf_cf_coercer import core
-from netcdf_cf_coercer.formatting import to_yaml_like
+import nc_check  # noqa: F401
+from nc_check import core
+from nc_check.formatting import to_yaml_like
 
 
 def test_check_reports_missing_conventions_and_coord_attrs() -> None:

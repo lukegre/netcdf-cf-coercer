@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from netcdf_cf_coercer import core
+from nc_check import core
 
 
 def test_make_compliant_creates_missing_axis_coordinates() -> None:

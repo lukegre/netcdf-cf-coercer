@@ -18,7 +18,7 @@ def _existing_file(path: str) -> Path:
 
 def run_check(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="nc-cf-check",
+        prog="nc-check",
         description="Run CF checks and print the same report as pretty_print=True.",
     )
     parser.add_argument("fname", type=_existing_file, help="Input NetCDF file")
@@ -37,14 +37,14 @@ def run_check(argv: list[str] | None = None) -> int:
                 pretty_print=True,
             )
     except Exception as exc:
-        print(f"nc-cf-check: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"nc-check: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
 
 
 def run_comply(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="nc-cf-comply",
+        prog="nc-comply",
         description="Apply safe CF compliance fixes and write a new NetCDF file.",
     )
     parser.add_argument("fname_in", type=_existing_file, help="Input NetCDF file")
@@ -56,7 +56,7 @@ def run_comply(argv: list[str] | None = None) -> int:
             compliant = make_dataset_compliant(ds)
             compliant.to_netcdf(args.fname_out)
     except Exception as exc:
-        print(f"nc-cf-comply: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"nc-comply: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
 

@@ -190,7 +190,9 @@ def augment_issues_with_standard_name_suggestions(
             }
             continue
 
-        if entry.canonical_units and not _units_compatible(str(units), entry.canonical_units):
+        if entry.canonical_units and not _units_compatible(
+            str(units), entry.canonical_units
+        ):
             var_suggestions[var_name] = {
                 "units_check": {
                     "status": "mismatch",

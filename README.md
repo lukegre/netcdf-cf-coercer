@@ -1,4 +1,4 @@
-# netcdf-cf-coercer
+# nc-check
 
 Prepare `xarray.Dataset` objects to be written as CF-1.12-compliant NetCDF files.
 
@@ -12,7 +12,7 @@ uv sync
 
 ```python
 import xarray as xr
-import netcdf_cf_coercer  # Registers the .cf dataset accessor
+import nc_check  # Registers the .cf dataset accessor
 
 ds = xr.Dataset(
     data_vars={"temp": (("time", "lat", "lon"), [[[280.0]]])},

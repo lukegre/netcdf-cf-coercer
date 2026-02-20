@@ -2,7 +2,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from netcdf_cf_coercer import standard_names
+from nc_check import standard_names
 
 
 def test_unknown_standard_name_is_reported() -> None:

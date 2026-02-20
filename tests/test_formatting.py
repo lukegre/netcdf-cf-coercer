@@ -1,6 +1,6 @@
 import builtins
 
-from netcdf_cf_coercer import formatting
+from nc_check import formatting
 
 
 def test_to_yaml_like_handles_scalars_and_empty_collections() -> None:
