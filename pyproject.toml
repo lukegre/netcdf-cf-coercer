@@ -1,6 +1,6 @@
 [project]
 name = "nc-check"
-version = "0.1.3"
+version = "0.2.0"
 description = "Prepare xarray Datasets for CF-1.12 compliant NetCDF output"
 readme = "README.md"
 authors = [
