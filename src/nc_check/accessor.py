@@ -8,6 +8,7 @@ import xarray as xr
 
 from .core import (
     CF_STANDARD_NAME_TABLE_URL,
+    ComplianceEngine,
     check_dataset_compliant,
     make_dataset_compliant,
 )
@@ -35,6 +36,8 @@ def _status_kind(status: Any) -> str:
         return "pass"
     if normalized in {"fail", "failed", "error", "fatal", "false"}:
         return "fail"
+    if normalized in {"skip", "skipped"} or normalized.startswith("skip"):
+        return "skip"
     return "warn"
 
 
@@ -217,6 +220,7 @@ class CFCoercerAccessor:
         cache_tables: bool = False,
         domain: str | None = None,
         fallback_to_heuristic: bool = True,
+        engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
@@ -233,6 +237,7 @@ class CFCoercerAccessor:
         - Uses `cfchecker` against an in-memory NetCDF payload.
         - Falls back to heuristic checks when `cfchecker` cannot run and
           `fallback_to_heuristic=True`.
+        - Use `engine="heuristic"` to force the built-in heuristic checker.
         - Supports extra convention checks such as ``ferret`` via
           `conventions="cf,ferret"` (or list/tuple).
         """
@@ -245,6 +250,7 @@ class CFCoercerAccessor:
             cache_tables=cache_tables,
             domain=domain,
             fallback_to_heuristic=fallback_to_heuristic,
+            engine=engine,
             conventions=conventions,
             report_format=report_format,
             report_html_file=report_html_file,
@@ -261,6 +267,7 @@ class CFCoercerAccessor:
         cache_tables: bool = False,
         domain: str | None = None,
         fallback_to_heuristic: bool = True,
+        engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
@@ -274,6 +281,7 @@ class CFCoercerAccessor:
             cache_tables=cache_tables,
             domain=domain,
             fallback_to_heuristic=fallback_to_heuristic,
+            engine=engine,
             conventions=conventions,
             report_format=report_format,
             report_html_file=report_html_file,
@@ -401,6 +409,7 @@ class CFCoercerAccessor:
         cache_tables: bool = False,
         domain: str | None = None,
         fallback_to_heuristic: bool = True,
+        engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         var_name: str | None = None,
         lon_name: str | None = None,
@@ -438,6 +447,7 @@ class CFCoercerAccessor:
                 cache_tables=cache_tables,
                 domain=domain,
                 fallback_to_heuristic=fallback_to_heuristic,
+                engine=engine,
                 conventions=conventions,
                 report_format="python",
             )
@@ -530,6 +540,7 @@ class CFCoercerAccessor:
         cache_tables: bool = False,
         domain: str | None = None,
         fallback_to_heuristic: bool = True,
+        engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         var_name: str | None = None,
         lon_name: str | None = None,
@@ -552,6 +563,7 @@ class CFCoercerAccessor:
             cache_tables=cache_tables,
             domain=domain,
             fallback_to_heuristic=fallback_to_heuristic,
+            engine=engine,
             conventions=conventions,
             var_name=var_name,
             lon_name=lon_name,

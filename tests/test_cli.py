@@ -21,6 +21,7 @@ def test_run_check_uses_tables_report_format(monkeypatch, tmp_path, capsys) -> N
     ) -> None:
         seen["report_format"] = report_format
         seen["conventions"] = kwargs.get("conventions")
+        seen["engine"] = kwargs.get("engine")
         print("report-output")
 
     monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
@@ -42,6 +43,7 @@ def test_run_check_uses_tables_report_format(monkeypatch, tmp_path, capsys) -> N
     assert seen_open["kwargs"] == {"chunks": {}}
     assert seen["report_format"] == "tables"
     assert seen["conventions"] == "cf,ferret"
+    assert seen["engine"] == "auto"
     assert "report-output" in out
 
 
@@ -104,6 +106,7 @@ def test_run_check_forwards_custom_conventions(monkeypatch, tmp_path) -> None:
     ) -> None:
         seen["report_format"] = report_format
         seen["conventions"] = kwargs.get("conventions")
+        seen["engine"] = kwargs.get("engine")
 
     monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
 
@@ -112,6 +115,7 @@ def test_run_check_forwards_custom_conventions(monkeypatch, tmp_path) -> None:
     assert status == 0
     assert seen["report_format"] == "tables"
     assert seen["conventions"] == "ferret"
+    assert seen["engine"] == "auto"
 
 
 def test_run_check_save_report_uses_html_and_default_output_path(
@@ -134,6 +138,7 @@ def test_run_check_save_report_uses_html_and_default_output_path(
         seen["report_format"] = report_format
         seen["report_html_file"] = report_html_file
         seen["conventions"] = kwargs.get("conventions")
+        seen["engine"] = kwargs.get("engine")
 
     monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
 
@@ -143,6 +148,33 @@ def test_run_check_save_report_uses_html_and_default_output_path(
     assert seen["report_format"] == "html"
     assert seen["report_html_file"] == source.with_name("sample_report.html")
     assert seen["conventions"] == "cf,ferret"
+    assert seen["engine"] == "auto"
+
+
+def test_run_check_forwards_compliance_engine(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "in.nc"
+    xr.Dataset(data_vars={"v": (("time",), [1.0])}, coords={"time": [0]}).to_netcdf(
+        source
+    )
+
+    seen: dict[str, object] = {}
+
+    def _fake_check(
+        ds: xr.Dataset,
+        *,
+        report_format: str = "python",
+        **kwargs: object,
+    ) -> None:
+        seen["report_format"] = report_format
+        seen["engine"] = kwargs.get("engine")
+
+    monkeypatch.setattr(cli, "check_dataset_compliant", _fake_check)
+
+    status = cli.run_check([str(source), "--engine", "heuristic"])
+
+    assert status == 0
+    assert seen["report_format"] == "tables"
+    assert seen["engine"] == "heuristic"
 
 
 def test_run_check_ocean_cover_mode_routes_to_ocean_checker(
@@ -286,6 +318,7 @@ def test_run_check_all_mode_with_save_report_uses_single_combined_report(
         ds: xr.Dataset,
         *,
         conventions: str | list[str] | tuple[str, ...] | None = None,
+        engine: str = "auto",
         lon_name: str | None = None,
         lat_name: str | None = None,
         time_name: str | None = "time",
@@ -293,6 +326,7 @@ def test_run_check_all_mode_with_save_report_uses_single_combined_report(
         report_html_file: str | None = None,
     ) -> None:
         seen["conventions"] = conventions
+        seen["engine"] = engine
         seen["lon_name"] = lon_name
         seen["lat_name"] = lat_name
         seen["time_name"] = time_name
@@ -305,6 +339,7 @@ def test_run_check_all_mode_with_save_report_uses_single_combined_report(
 
     assert status == 0
     assert seen["conventions"] == "cf,ferret"
+    assert seen["engine"] == "auto"
     assert seen["lon_name"] is None
     assert seen["lat_name"] is None
     assert seen["time_name"] == "time"
@@ -325,6 +360,7 @@ def test_run_check_all_mode_forwards_coordinate_names(monkeypatch, tmp_path) -> 
         ds: xr.Dataset,
         *,
         conventions: str | list[str] | tuple[str, ...] | None = None,
+        engine: str = "auto",
         lon_name: str | None = None,
         lat_name: str | None = None,
         time_name: str | None = "time",
@@ -332,6 +368,7 @@ def test_run_check_all_mode_forwards_coordinate_names(monkeypatch, tmp_path) -> 
         report_html_file: str | None = None,
     ) -> None:
         seen["conventions"] = conventions
+        seen["engine"] = engine
         seen["lon_name"] = lon_name
         seen["lat_name"] = lat_name
         seen["time_name"] = time_name
@@ -355,8 +392,39 @@ def test_run_check_all_mode_forwards_coordinate_names(monkeypatch, tmp_path) -> 
 
     assert status == 0
     assert seen["conventions"] == "cf,ferret"
+    assert seen["engine"] == "auto"
     assert seen["lon_name"] == "x"
     assert seen["lat_name"] == "y"
     assert seen["time_name"] == "t"
     assert seen["report_format"] == "tables"
     assert seen["report_html_file"] is None
+
+
+def test_run_check_all_mode_forwards_engine(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "sample.nc"
+    xr.Dataset(
+        data_vars={"v": (("time",), [1.0])},
+        coords={"time": [0]},
+    ).to_netcdf(source)
+
+    seen: dict[str, object] = {}
+
+    def _fake_all(
+        ds: xr.Dataset,
+        *,
+        conventions: str | list[str] | tuple[str, ...] | None = None,
+        engine: str = "auto",
+        lon_name: str | None = None,
+        lat_name: str | None = None,
+        time_name: str | None = "time",
+        report_format: str = "python",
+        report_html_file: str | None = None,
+    ) -> None:
+        seen["engine"] = engine
+
+    monkeypatch.setattr(cli, "_run_all_checks", _fake_all)
+
+    status = cli.run_check(["all", str(source), "--engine", "heuristic"])
+
+    assert status == 0
+    assert seen["engine"] == "heuristic"

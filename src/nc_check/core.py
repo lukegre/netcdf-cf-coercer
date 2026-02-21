@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import re
 import warnings
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import xarray as xr
@@ -18,20 +16,24 @@ from .formatting import (
     render_pretty_report_html,
     save_html_report,
 )
+from .heuristic import (
+    AxisGuess,
+    expected_coord_attrs,
+    guess_axis_for_dim,
+    heuristic_check_dataset,
+    is_numeric_dtype,
+)
 from .standard_names import augment_issues_with_standard_name_suggestions
 
 CF_VERSION = "CF-1.12"
 CF_STANDARD_NAME_TABLE_URL = "https://cfconventions.org/Data/cf-standard-names/current/src/cf-standard-name-table.xml"
+ComplianceEngine = Literal["auto", "cfchecker", "cfcheck", "heuristic"]
 _CFCHECKER_INSTALL_HINT = (
     "cfchecker is not installed. Install optional CF dependencies "
     "with `uv sync --extra cf`."
 )
 
-_LAT_NAMES = {"lat", "latitude", "y"}
-_LON_NAMES = {"lon", "longitude", "x"}
-_TIME_NAMES = {"time", "t"}
 _NON_COMPLIANT_CATEGORIES = ("FATAL", "ERROR", "WARN")
-_VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _SUPPORTED_CONVENTIONS = ("cf", "ferret")
 _DEFAULT_CONVENTIONS = ("cf", "ferret")
 _CF_ATTR_CASE_KEYS = (
@@ -49,16 +51,10 @@ _CF_ATTR_CASE_KEYS = (
 )
 
 
-@dataclass(frozen=True)
-class AxisGuess:
-    dim: str
-    axis_type: str
-
-
 def _empty_report(cf_version: str = "1.12") -> dict[str, Any]:
     return {
         "cf_version": _format_cf_version(cf_version),
-        "engine": "cfchecker",
+        "engine": "none",
         "engine_status": "skipped",
         "check_method": "conventions_only",
         "global": [],
@@ -102,209 +98,17 @@ def _normalize_requested_conventions(
     return tuple(selected)
 
 
-def _normalize_name(name: str) -> str:
-    return name.strip().lower()
-
-
-def _is_numeric_dtype(dtype: Any) -> bool:
-    return np.issubdtype(dtype, np.number)
-
-
-def _guess_axis_for_dim(ds: xr.Dataset, dim: str) -> AxisGuess | None:
-    dim_norm = _normalize_name(dim)
-    coord = ds.coords.get(dim)
-    coord_name_norm = _normalize_name(coord.name) if coord is not None else dim_norm
-
-    if dim_norm in _TIME_NAMES or coord_name_norm in _TIME_NAMES:
-        return AxisGuess(dim=dim, axis_type="time")
-
-    if dim_norm in _LAT_NAMES or coord_name_norm in _LAT_NAMES:
-        return AxisGuess(dim=dim, axis_type="lat")
-
-    if dim_norm in _LON_NAMES or coord_name_norm in _LON_NAMES:
-        return AxisGuess(dim=dim, axis_type="lon")
-
-    if coord is not None:
-        standard_name = _normalize_name(str(coord.attrs.get("standard_name", "")))
-        units = _normalize_name(str(coord.attrs.get("units", "")))
-
-        if standard_name == "latitude" or units == "degrees_north":
-            return AxisGuess(dim=dim, axis_type="lat")
-        if standard_name == "longitude" or units == "degrees_east":
-            return AxisGuess(dim=dim, axis_type="lon")
-        if standard_name == "time":
-            return AxisGuess(dim=dim, axis_type="time")
-
-    return None
-
-
-def _expected_coord_attrs(axis_type: str) -> dict[str, str]:
-    if axis_type == "lat":
-        return {
-            "standard_name": "latitude",
-            "long_name": "latitude",
-            "units": "degrees_north",
-            "axis": "Y",
-        }
-    if axis_type == "lon":
-        return {
-            "standard_name": "longitude",
-            "long_name": "longitude",
-            "units": "degrees_east",
-            "axis": "X",
-        }
-    if axis_type == "time":
-        return {
-            "standard_name": "time",
-            "axis": "T",
-        }
-    return {}
-
-
-def _heuristic_check_dataset(ds: xr.Dataset) -> dict[str, Any]:
-    """Fallback checker used only when cfchecker is unavailable."""
-    issues: dict[str, Any] = {
-        "cf_version": CF_VERSION,
-        "engine": "cfchecker",
-        "engine_status": "unavailable",
-        "check_method": "heuristic",
-        "global": [],
-        "coordinates": {},
-        "variables": {},
-        "notes": [],
-    }
-
-    conventions = ds.attrs.get("Conventions")
-    if conventions != CF_VERSION:
-        issues["global"].append(
-            {
-                "item": "Conventions",
-                "current": conventions,
-                "expected": CF_VERSION,
-                "suggested_fix": "set_global_attr",
-            }
+def _normalize_requested_engine(engine: str | None) -> str:
+    if engine is None:
+        return "auto"
+    normalized = str(engine).strip().lower()
+    if normalized == "cfcheck":
+        return "cfchecker"
+    if normalized not in {"auto", "cfchecker", "heuristic"}:
+        raise ValueError(
+            "Unsupported engine. Expected one of: auto, cfchecker, cfcheck, heuristic."
         )
-
-    axis_guesses: dict[str, AxisGuess] = {}
-    for dim in ds.dims:
-        dim = str(dim)
-        guess = _guess_axis_for_dim(ds, dim)
-        if guess:
-            axis_guesses[dim] = guess
-        else:
-            issues["notes"].append(
-                f"Could not infer CF axis type for dimension '{dim}'."
-            )
-
-    for dim, guess in axis_guesses.items():
-        coord = ds.coords.get(dim)
-        if coord is None:
-            issues["coordinates"][dim] = [
-                {
-                    "item": "missing_dimension_coordinate",
-                    "current": None,
-                    "expected": f"coordinate variable named '{dim}'",
-                    "suggested_fix": "create_dimension_coordinate",
-                }
-            ]
-            continue
-
-        coord_issues = []
-        expected_attrs = _expected_coord_attrs(guess.axis_type)
-        for key, expected_value in expected_attrs.items():
-            current_value = coord.attrs.get(key)
-            if current_value != expected_value:
-                coord_issues.append(
-                    {
-                        "item": f"coord_attr:{key}",
-                        "current": current_value,
-                        "expected": expected_value,
-                        "suggested_fix": "set_coord_attr",
-                    }
-                )
-
-        if guess.axis_type in {"lat", "lon"} and not _is_numeric_dtype(coord.dtype):
-            coord_issues.append(
-                {
-                    "item": "coord_dtype",
-                    "current": str(coord.dtype),
-                    "expected": "numeric",
-                    "suggested_fix": "convert_coord_dtype",
-                }
-            )
-
-        if coord_issues:
-            issues["coordinates"][dim] = coord_issues
-
-    for var_name, da in ds.data_vars.items():
-        var_issues = []
-        if not _VALID_NAME_RE.match(str(var_name)):
-            var_issues.append(
-                {
-                    "item": "invalid_variable_name",
-                    "current": var_name,
-                    "expected": "start with a letter, then letters/digits/underscore",
-                    "suggested_fix": "rename_variable",
-                }
-            )
-        if _is_numeric_dtype(da.dtype) and da.attrs.get("units") is None:
-            var_issues.append(
-                {
-                    "item": "missing_units_attr",
-                    "current": None,
-                    "expected": "UDUNITS-compatible units string for dimensional quantities",
-                    "suggested_fix": "set_variable_attr",
-                }
-            )
-        if da.attrs.get("standard_name") is None and da.attrs.get("long_name") is None:
-            var_issues.append(
-                {
-                    "item": "missing_standard_or_long_name",
-                    "current": None,
-                    "expected": "at least one of: standard_name, long_name",
-                    "suggested_fix": "set_variable_attr",
-                }
-            )
-        if da.dtype == object:
-            var_issues.append(
-                {
-                    "item": "object_dtype_variable",
-                    "current": str(da.dtype),
-                    "expected": "netCDF-compatible primitive dtype",
-                    "suggested_fix": "cast_variable_dtype",
-                }
-            )
-        std_name = da.attrs.get("standard_name")
-        if std_name is not None and da.attrs.get("units") is None:
-            var_issues.append(
-                {
-                    "item": "missing_units_for_standard_name",
-                    "current": None,
-                    "expected": "units consistent with standard_name canonical_units",
-                    "suggested_fix": "set_variable_attr",
-                }
-            )
-        if var_issues:
-            issues["variables"][var_name] = var_issues
-
-    for dim, guess in axis_guesses.items():
-        if guess.axis_type != "time":
-            continue
-        coord = ds.coords.get(dim)
-        if coord is None:
-            continue
-        time_issues = issues["coordinates"].setdefault(dim, [])
-        if coord.attrs.get("units") is None:
-            time_issues.append(
-                {
-                    "item": "coord_attr:units",
-                    "current": None,
-                    "expected": "time units e.g. 'days since 1970-01-01'",
-                    "suggested_fix": "set_coord_attr",
-                }
-            )
-
-    return issues
+    return normalized
 
 
 def _append_coordinate_finding(
@@ -676,6 +480,7 @@ def check_dataset_compliant(
     cache_tables: bool = False,
     domain: str | None = None,
     fallback_to_heuristic: bool = True,
+    engine: ComplianceEngine = "auto",
     conventions: str | list[str] | tuple[str, ...] | None = None,
     report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
@@ -686,27 +491,12 @@ def check_dataset_compliant(
         raise ValueError("`report_html_file` is only valid when report_format='html'.")
 
     selected_conventions = _normalize_requested_conventions(conventions)
+    selected_engine = _normalize_requested_engine(engine)
+    formatted_cf_version = _format_cf_version(cf_version)
 
     if "cf" in selected_conventions:
-        try:
-            issues = _run_cfchecker_on_dataset(
-                ds,
-                cf_version=cf_version,
-                standard_name_table_xml=standard_name_table_xml,
-                cf_area_types_xml=cf_area_types_xml,
-                cf_region_names_xml=cf_region_names_xml,
-                cache_tables=cache_tables,
-            )
-            augment_issues_with_standard_name_suggestions(
-                ds,
-                issues,
-                standard_name_table_xml,
-                domain=domain,
-            )
-        except Exception as exc:
-            if not fallback_to_heuristic:
-                raise
-            issues = _heuristic_check_dataset(ds)
+        if selected_engine == "heuristic":
+            issues = heuristic_check_dataset(ds, cf_version=formatted_cf_version)
             issues["suggestions"] = {"variables": {}}
             augment_issues_with_standard_name_suggestions(
                 ds,
@@ -714,13 +504,41 @@ def check_dataset_compliant(
                 standard_name_table_xml,
                 domain=domain,
             )
-            issues["checker_error"] = {
-                "type": type(exc).__name__,
-                "message": str(exc),
-            }
-            issues["notes"].append(
-                "cfchecker could not run; returned heuristic checks instead."
-            )
+        else:
+            try:
+                issues = _run_cfchecker_on_dataset(
+                    ds,
+                    cf_version=cf_version,
+                    standard_name_table_xml=standard_name_table_xml,
+                    cf_area_types_xml=cf_area_types_xml,
+                    cf_region_names_xml=cf_region_names_xml,
+                    cache_tables=cache_tables,
+                )
+                augment_issues_with_standard_name_suggestions(
+                    ds,
+                    issues,
+                    standard_name_table_xml,
+                    domain=domain,
+                )
+            except Exception as exc:
+                if not fallback_to_heuristic:
+                    raise
+                issues = heuristic_check_dataset(ds, cf_version=formatted_cf_version)
+                issues["engine_status"] = "unavailable"
+                issues["suggestions"] = {"variables": {}}
+                augment_issues_with_standard_name_suggestions(
+                    ds,
+                    issues,
+                    standard_name_table_xml,
+                    domain=domain,
+                )
+                issues["checker_error"] = {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                }
+                issues["notes"].append(
+                    "cfchecker could not run; returned heuristic checks instead."
+                )
     else:
         issues = _empty_report(cf_version=cf_version)
         issues["notes"].append(
@@ -728,6 +546,7 @@ def check_dataset_compliant(
         )
 
     issues["conventions_checked"] = list(selected_conventions)
+    issues["engine_requested"] = selected_engine
     _apply_selected_convention_checks(ds, issues, selected_conventions)
     _recompute_counts(issues)
 
@@ -761,7 +580,7 @@ def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
     axis_guesses: dict[str, AxisGuess] = {}
     for dim in out.dims:
         dim = str(dim)
-        guess = _guess_axis_for_dim(out, dim)
+        guess = guess_axis_for_dim(out, dim)
         if guess:
             axis_guesses[dim] = guess
 
@@ -776,10 +595,10 @@ def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
         coord = out.coords[dim]
         new_attrs = deepcopy(coord.attrs)
         dim = str(dim)
-        for key, val in _expected_coord_attrs(axis_guesses[dim].axis_type).items():
+        for key, val in expected_coord_attrs(axis_guesses[dim].axis_type).items():
             new_attrs[key] = val
 
-        if axis_guesses[dim].axis_type in {"lat", "lon"} and not _is_numeric_dtype(
+        if axis_guesses[dim].axis_type in {"lat", "lon"} and not is_numeric_dtype(
             coord.dtype
         ):
             # Preserve laziness for dask-backed coordinates by casting through xarray.

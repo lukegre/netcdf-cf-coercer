@@ -70,7 +70,7 @@ def _status_style(status: str | None) -> str:
     if normalized in {"fail", "error"}:
         return "bold bright_red"
     if normalized.startswith("skip"):
-        return "yellow"
+        return "bright_black"
     if normalized == "pass":
         return "bright_green"
     return _RICH_TEXT_STYLE
@@ -866,6 +866,11 @@ def _html_status_badge(status: Any) -> str:
         badge_class = (
             "bg-danger-subtle text-danger-emphasis border border-danger-subtle"
         )
+    elif normalized in {"skip", "skipped"} or normalized.startswith("skip"):
+        text = "SKIPPED"
+        badge_class = (
+            "bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle"
+        )
     else:
         text = "WARNING"
         badge_class = (
@@ -972,10 +977,26 @@ def _html_severity_badge(severity: Any) -> str:
     return f"<span class='badge report-badge rounded-pill {badge_class}'>{escape(text)}</span>"
 
 
-def _html_cell_value(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        return f"<pre>{escape(to_yaml_like(value))}</pre>"
-    return escape(_stringify(value))
+def _cf_suggestion_rows(report: dict[str, Any]) -> list[dict[str, str]]:
+    suggestions = (report.get("suggestions") or {}).get("variables")
+    if not isinstance(suggestions, dict):
+        return []
+
+    rows: list[dict[str, str]] = []
+    for var_name, suggestion in suggestions.items():
+        if isinstance(suggestion, (dict, list)):
+            detail = to_yaml_like(suggestion)
+        else:
+            detail = _stringify(suggestion)
+        rows.append(
+            {
+                "scope": _stringify(var_name),
+                "convention": "suggestion",
+                "severity": "INFO",
+                "detail": detail,
+            }
+        )
+    return rows
 
 
 def _status_kind(status: Any) -> str:
@@ -984,7 +1005,40 @@ def _status_kind(status: Any) -> str:
         return "pass"
     if normalized in {"fail", "failed", "error", "fatal", "false"}:
         return "fail"
+    if normalized in {"skip", "skipped"} or normalized.startswith("skip"):
+        return "skip"
     return "warn"
+
+
+def _combine_status_kinds(statuses: list[Any], fallback: Any) -> str:
+    kinds = [_status_kind(status) for status in statuses if status is not None]
+    if any(kind == "fail" for kind in kinds):
+        return "fail"
+    if any(kind == "warn" for kind in kinds):
+        return "warn"
+    if any(kind == "pass" for kind in kinds):
+        return "pass"
+    if any(kind == "skip" for kind in kinds):
+        return "skip"
+    return _status_kind(fallback)
+
+
+def _ocean_variable_status(report: dict[str, Any]) -> str:
+    statuses: list[Any] = []
+    for check_name in ("edge_of_map", "land_ocean_offset", "time_missing"):
+        check = report.get(check_name)
+        if isinstance(check, dict):
+            statuses.append(check.get("status"))
+    return _combine_status_kinds(statuses, report.get("ok"))
+
+
+def _time_cover_variable_status(report: dict[str, Any]) -> str:
+    statuses: list[Any] = []
+    for check_name in ("time_missing", "time_format"):
+        check = report.get(check_name)
+        if isinstance(check, dict):
+            statuses.append(check.get("status"))
+    return _combine_status_kinds(statuses, report.get("ok"))
 
 
 def _html_stat_strip(items: list[tuple[str, Any, str | None]]) -> str:
@@ -1185,16 +1239,12 @@ def _cf_report_sections(report: dict[str, Any]) -> str:
             )
         )
 
-    suggestions = (report.get("suggestions") or {}).get("variables")
-    if isinstance(suggestions, dict) and suggestions:
-        rows = [
-            [escape(_stringify(var_name)), _html_cell_value(suggestion)]
-            for var_name, suggestion in suggestions.items()
-        ]
+    suggestion_rows = _cf_suggestion_rows(report)
+    if suggestion_rows:
         sections.append(
             _html_static_section(
                 "Suggested Improvements",
-                _html_table(["Variable", "Suggestion"], rows),
+                _html_issue_cards(suggestion_rows),
             )
         )
 
@@ -1564,7 +1614,7 @@ def render_pretty_ocean_reports_html(reports: list[dict[str, Any]]) -> str:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(report.get("variable")),
-                status=report.get("ok"),
+                status=_ocean_variable_status(report),
                 body_html=_ocean_report_sections(report),
                 open_by_default=False,
             )
@@ -1728,7 +1778,7 @@ def render_pretty_time_cover_reports_html(reports: list[dict[str, Any]]) -> str:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(report.get("variable")),
-                status=report.get("ok"),
+                status=_time_cover_variable_status(report),
                 body_html=_time_cover_report_sections(report),
                 open_by_default=False,
             )
@@ -1756,7 +1806,7 @@ def _multi_variable_ocean_body(report: dict[str, Any]) -> str:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(per_var.get("variable")),
-                status=per_var.get("ok"),
+                status=_ocean_variable_status(per_var),
                 body_html=_ocean_report_sections(per_var),
                 open_by_default=False,
             )
@@ -1779,7 +1829,7 @@ def _multi_variable_time_cover_body(report: dict[str, Any]) -> str:
         blocks.append(
             _html_variable_section(
                 variable_name=_stringify(per_var.get("variable")),
-                status=per_var.get("ok"),
+                status=_time_cover_variable_status(per_var),
                 body_html=_time_cover_report_sections(per_var),
                 open_by_default=False,
             )

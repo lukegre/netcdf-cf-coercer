@@ -17,12 +17,14 @@ def test_check_reports_missing_conventions_and_coord_attrs() -> None:
     issues = ds.check.compliance(report_format="python")
 
     assert issues["cf_version"] == "CF-1.12"
-    assert issues["engine"] == "cfchecker"
+    assert issues["engine"] in {"cfchecker", "heuristic"}
     assert issues["check_method"] in {"cfchecker", "heuristic"}
     if issues["engine_status"] == "ok":
+        assert issues["engine"] == "cfchecker"
         assert issues["check_method"] == "cfchecker"
         assert issues["global"] or issues["variables"]
     else:
+        assert issues["engine"] == "heuristic"
         assert issues["check_method"] == "heuristic"
         assert "checker_error" in issues
         assert any(i["item"] == "Conventions" for i in issues["global"])
@@ -120,6 +122,7 @@ def test_fallback_checker_reports_variable_level_issues(monkeypatch) -> None:
 
     issues = ds.check.compliance(report_format="python")
 
+    assert issues["engine"] == "heuristic"
     assert issues["engine_status"] == "unavailable"
     assert issues["check_method"] == "heuristic"
     assert "bad-name" in issues["variables"]
@@ -127,6 +130,29 @@ def test_fallback_checker_reports_variable_level_issues(monkeypatch) -> None:
     assert "invalid_variable_name" in items
     assert "missing_units_attr" in items
     assert "missing_standard_or_long_name" in items
+
+
+def test_compliance_can_force_heuristic_engine(monkeypatch) -> None:
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("cfchecker should not run when engine='heuristic'")
+
+    monkeypatch.setattr(core, "_run_cfchecker_on_dataset", _unexpected)
+
+    ds = xr.Dataset(
+        data_vars={"v": (("time",), [1.0])},
+        coords={"time": [0]},
+    )
+
+    issues = ds.check.compliance(
+        engine="heuristic",
+        fallback_to_heuristic=False,
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    assert issues["engine"] == "heuristic"
+    assert issues["engine_status"] == "ok"
+    assert issues["engine_requested"] == "heuristic"
 
 
 def test_standard_name_suggestions_from_xml(monkeypatch) -> None:
@@ -278,7 +304,8 @@ def test_html_report_can_be_saved(tmp_path) -> None:
     assert "bootstrap@5" in html
     assert "summary-table" in html
     assert "kv-grid" not in html
-    assert "WARNING" in html
+    assert "SKIPPED" in html
+    assert "WARNING" not in html
     assert report_file.exists()
     assert report_file.read_text(encoding="utf-8") == html
 
@@ -300,7 +327,8 @@ def test_cf_alias_accepts_html_report_format() -> None:
     assert "<details class='report-section'" not in html
     assert "<section class='report-section static-section'>" in html
     assert "summary-table" in html
-    assert "WARNING" in html
+    assert "SKIPPED" in html
+    assert "WARNING" not in html
 
 
 def test_ferret_convention_flags_coordinate_fillvalue() -> None:
@@ -362,6 +390,7 @@ def test_ferret_only_mode_skips_cfchecker(monkeypatch) -> None:
         report_format="python",
     )
 
+    assert issues["engine"] == "none"
     assert issues["engine_status"] == "skipped"
     assert issues["check_method"] == "conventions_only"
     assert issues["conventions_checked"] == ["ferret"]

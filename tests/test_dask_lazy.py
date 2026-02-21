@@ -55,6 +55,7 @@ def test_check_accepts_lazy_dataset_with_fallback(monkeypatch) -> None:
 
     issues = ds.check.compliance(report_format="python")
 
+    assert issues["engine"] == "heuristic"
     assert issues["check_method"] == "heuristic"
     assert issues["engine_status"] == "unavailable"
 
@@ -87,6 +88,7 @@ def test_check_accepts_lazy_dataset_without_fallback(monkeypatch) -> None:
         report_format="python",
     )
 
+    assert issues["engine"] == "cfchecker"
     assert issues["check_method"] == "cfchecker"
     assert issues["engine_status"] == "ok"
 

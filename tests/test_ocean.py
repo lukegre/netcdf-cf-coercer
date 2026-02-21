@@ -247,7 +247,8 @@ def test_ocean_cover_html_report_has_collapsible_sections_and_modern_style() -> 
     assert "<section class='report-section static-section'>" in html
     assert "<details class='report-section'" not in html
     assert "PASSED" in html
-    assert "WARNING" in html
+    assert "SKIPPED" in html
+    assert "WARNING" not in html
     assert "bootstrap@5" in html
 
 
@@ -298,6 +299,19 @@ def test_time_cover_html_report_can_be_saved(tmp_path) -> None:
     assert report_file.read_text(encoding="utf-8") == html
 
 
+def test_time_cover_html_skipped_is_not_reported_as_warning() -> None:
+    ds = xr.Dataset(
+        data_vars={"mask": (("lat", "lon"), np.ones((2, 3)))},
+        coords={"lat": [-1.0, 1.0], "lon": [0.0, 120.0, 240.0]},
+    )
+
+    html = ds.check.time_cover(var_name="mask", report_format="html")
+
+    assert isinstance(html, str)
+    assert "SKIPPED" in html
+    assert "WARNING" not in html
+
+
 def test_ocean_multi_variable_html_uses_collapsible_variable_sections() -> None:
     lon = np.array([0.0, 120.0, 240.0])
     lat = np.array([-1.0, 1.0])
@@ -333,6 +347,7 @@ def test_time_multi_variable_html_uses_collapsible_variable_sections() -> None:
         data_vars={
             "sst": (("time", "lat", "lon"), np.ones((2, 2, 3))),
             "sss": (("time", "lat", "lon"), np.ones((2, 2, 3))),
+            "mask": (("lat", "lon"), np.ones((2, 3))),
         },
         coords={"time": time, "lat": lat, "lon": lon},
     )
@@ -342,7 +357,11 @@ def test_time_multi_variable_html_uses_collapsible_variable_sections() -> None:
     assert isinstance(html, str)
     assert "Top Summary" in html
     assert "variable-report" in html
-    assert html.count("<details class='report-section variable-report'") == 2
+    assert html.count("<details class='report-section variable-report'") == 3
     assert "<details class='report-section variable-report' open>" not in html
     assert "summary-table" in html
     assert "kv-grid" not in html
+    assert (
+        "Variable: mask</span><span class='summary-badge'><span class='badge report-badge "
+        "rounded-pill bg-secondary-subtle"
+    ) in html

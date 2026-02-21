@@ -142,6 +142,7 @@ def test_check_dataset_compliant_falls_back_when_cfchecker_missing(monkeypatch) 
 
     issues = core.check_dataset_compliant(ds, fallback_to_heuristic=True)
 
+    assert issues["engine"] == "heuristic"
     assert issues["check_method"] == "heuristic"
     assert issues["engine_status"] == "unavailable"
     assert issues["checker_error"]["message"] == core._CFCHECKER_INSTALL_HINT
@@ -176,6 +177,16 @@ def test_translate_cfchecker_results_counts_and_scopes() -> None:
 def test_normalize_requested_conventions_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="Unsupported conventions"):
         core._normalize_requested_conventions("cf,not-real")
+
+
+def test_normalize_requested_engine_accepts_alias() -> None:
+    assert core._normalize_requested_engine("cfcheck") == "cfchecker"
+    assert core._normalize_requested_engine("heuristic") == "heuristic"
+
+
+def test_normalize_requested_engine_rejects_unknown() -> None:
+    with pytest.raises(ValueError, match="Unsupported engine"):
+        core._normalize_requested_engine("not-real")
 
 
 def test_check_dataset_compliant_rejects_unknown_report_format() -> None:
@@ -278,3 +289,157 @@ def test_check_dataset_compliant_flags_wrong_case_coordinate_units(monkeypatch) 
         for item in findings
     )
     assert issues["counts"]["warn"] >= 1
+
+
+def test_check_dataset_compliant_can_force_heuristic_engine(monkeypatch) -> None:
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("cfchecker should not run when engine='heuristic'")
+
+    monkeypatch.setattr(core, "_run_cfchecker_on_dataset", _unexpected)
+
+    ds = xr.Dataset(
+        data_vars={"bad-name": (("time",), [1.0, 2.0])},
+        coords={"time": [0, 1]},
+        attrs={"Conventions": "CF-1.11"},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="heuristic",
+        fallback_to_heuristic=False,
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    assert issues["engine"] == "heuristic"
+    assert issues["engine_status"] == "ok"
+    assert issues["engine_requested"] == "heuristic"
+    assert "checker_error" not in issues
+    assert issues["counts"]["warn"] > 0 or issues["counts"]["error"] > 0
+
+
+def test_check_dataset_compliant_engine_alias_cfcheck_uses_cfchecker(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_cfchecker(*args, **kwargs):
+        seen["called"] = True
+        return _empty_cfchecker_report()
+
+    monkeypatch.setattr(core, "_run_cfchecker_on_dataset", _fake_cfchecker)
+
+    ds = xr.Dataset(
+        data_vars={"v": (("time",), [1.0])},
+        coords={"time": [0]},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="cfcheck",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    assert seen["called"] is True
+    assert issues["engine"] == "cfchecker"
+    assert issues["engine_requested"] == "cfchecker"
+
+
+def test_heuristic_accepts_multi_token_conventions_with_cf_present() -> None:
+    ds = xr.Dataset(
+        data_vars={"v": (("time",), [1.0])},
+        coords={"time": [0]},
+        attrs={"Conventions": "CF-1.12, ACDD-1.3"},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="heuristic",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    global_items = [
+        item.get("item") for item in issues["global"] if isinstance(item, dict)
+    ]
+    assert "Conventions" not in global_items
+
+
+def test_heuristic_flags_missing_referenced_variables() -> None:
+    ds = xr.Dataset(
+        data_vars={
+            "temp": (
+                ("time",),
+                [280.0],
+                {
+                    "units": "K",
+                    "coordinates": "time lat lon",
+                    "grid_mapping": "crs_missing",
+                },
+            )
+        },
+        coords={"time": [0]},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="heuristic",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    findings = issues["variables"]["temp"]
+    assert any(
+        isinstance(item, dict)
+        and item.get("item") == "missing_referenced_variable:coordinates"
+        for item in findings
+    )
+    assert any(
+        isinstance(item, dict)
+        and item.get("item") == "missing_referenced_variable:grid_mapping"
+        for item in findings
+    )
+
+
+def test_engine_comparison_keeps_cf_attr_case_checks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        core, "_run_cfchecker_on_dataset", lambda *a, **k: _empty_cfchecker_report()
+    )
+
+    ds = xr.Dataset(
+        data_vars={
+            "temp": (
+                ("time",),
+                [290.0],
+                {"Units": "K", "standard_name": "air_temperature"},
+            )
+        },
+        coords={"time": ("time", [0.0], {"Units": "days since 1970-01-01"})},
+    )
+
+    cfchecker_report = core.check_dataset_compliant(
+        ds,
+        engine="cfchecker",
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+    heuristic_report = core.check_dataset_compliant(
+        ds,
+        engine="heuristic",
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    assert any(
+        item.get("item") == "attr_case_mismatch"
+        for item in cfchecker_report["variables"]["temp"]
+        if isinstance(item, dict)
+    )
+    assert any(
+        item.get("item") == "attr_case_mismatch"
+        for item in heuristic_report["variables"]["temp"]
+        if isinstance(item, dict)
+    )

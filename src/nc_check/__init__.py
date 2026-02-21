@@ -4,6 +4,7 @@ from .accessor import CFCoercerAccessor
 from .core import (
     CF_STANDARD_NAME_TABLE_URL,
     CF_VERSION,
+    ComplianceEngine,
     check_dataset_compliant,
     make_dataset_compliant,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "CFCoercerAccessor",
     "CF_STANDARD_NAME_TABLE_URL",
     "CF_VERSION",
+    "ComplianceEngine",
     "check_dataset_compliant",
     "check_ocean_cover",
     "check_time_cover",

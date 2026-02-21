@@ -79,6 +79,12 @@ def _build_check_parser() -> argparse.ArgumentParser:
         default="cf,ferret",
         help="Comma-separated conventions to check (default: cf,ferret).",
     )
+    compliance.add_argument(
+        "--engine",
+        default="auto",
+        choices=("auto", "cfchecker", "cfcheck", "heuristic"),
+        help="Compliance engine to use (default: auto).",
+    )
 
     ocean_cover = subparsers.add_parser(
         "ocean-cover",
@@ -123,6 +129,12 @@ def _build_check_parser() -> argparse.ArgumentParser:
         help="Comma-separated conventions to check for compliance (default: cf,ferret).",
     )
     check_all.add_argument(
+        "--engine",
+        default="auto",
+        choices=("auto", "cfchecker", "cfcheck", "heuristic"),
+        help="Compliance engine to use for the compliance step (default: auto).",
+    )
+    check_all.add_argument(
         "--lon-name",
         default=None,
         help="Explicit longitude coordinate name for ocean checks (default: inferred).",
@@ -153,6 +165,7 @@ def run_check(argv: list[str] | None = None) -> int:
         _default_report_html_path(input_file, mode) if args.save_report else None
     )
     conventions = getattr(args, "conventions", "cf,ferret")
+    engine = getattr(args, "engine", "auto")
     lon_name = getattr(args, "lon_name", None)
     lat_name = getattr(args, "lat_name", None)
     time_name = getattr(args, "time_name", "time")
@@ -163,6 +176,7 @@ def run_check(argv: list[str] | None = None) -> int:
                 check_dataset_compliant(
                     ds,
                     conventions=conventions,
+                    engine=engine,
                     report_format=report_format,
                     report_html_file=report_html_file,
                 )
@@ -186,6 +200,7 @@ def run_check(argv: list[str] | None = None) -> int:
                 _run_all_checks(
                     ds,
                     conventions=conventions,
+                    engine=engine,
                     lon_name=lon_name,
                     lat_name=lat_name,
                     time_name=time_name,
@@ -219,6 +234,7 @@ def _run_all_checks(
     ds: xr.Dataset,
     *,
     conventions: str | list[str] | tuple[str, ...] | None,
+    engine: str,
     lon_name: str | None,
     lat_name: str | None,
     time_name: str | None,
@@ -227,6 +243,7 @@ def _run_all_checks(
 ) -> dict[str, object] | str | None:
     return ds.check.all(
         conventions=conventions,
+        engine=engine,
         lon_name=lon_name,
         lat_name=lat_name,
         time_name=time_name,

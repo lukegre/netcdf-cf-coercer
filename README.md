@@ -50,9 +50,11 @@ nc-check input.nc
 
 # Explicit check modes
 nc-check compliance input.nc
+nc-check compliance input.nc --engine heuristic
 nc-check ocean-cover input.nc
 nc-check time-cover input.nc
 nc-check all input.nc
+nc-check all input.nc --engine cfchecker
 
 # Explicit coordinate names when they differ from lon/lat/time
 nc-check ocean-cover input.nc --lon-name x --lat-name y --time-name t
@@ -81,6 +83,8 @@ You can choose which conventions to check:
 ```python
 ds.check.compliance(conventions="cf,ferret")
 ds.check.compliance(conventions="ferret")  # custom-only checks
+ds.check.compliance(engine="heuristic")  # force built-in heuristic engine
+ds.check.compliance(engine="cfchecker")  # require cfchecker path
 
 # Explicit coordinate names
 ds.check.ocean_cover(lon_name="x", lat_name="y", time_name="t")
@@ -130,6 +134,10 @@ Notes:
 - The built-in `ferret` convention flags coordinate `_FillValue` usage as an error.
 - If `cfchecker` cannot run, `compliance()` falls back to heuristic checks and includes
   a `checker_error` field in the response.
+- You can choose the compliance engine explicitly with
+  `engine="heuristic"` or `engine="cfchecker"` (CLI: `--engine`).
+- The report `engine` field reflects what ran: `cfchecker`, `heuristic`, or `none`
+  (when CF checks are skipped, e.g. `conventions="ferret"`).
 - You can bias standard-name suggestions by domain, e.g.
   `ds.check.compliance(domain="ocean")` (also supports `atmosphere`, `land`, `cryosphere`,
   and `biogeochemistry`).

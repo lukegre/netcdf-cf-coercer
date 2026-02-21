@@ -48,6 +48,9 @@ _REPORT_STYLES = """
   --hero-accent-b:#f59e0b;
   --header-bg:#eef4f2;
   --header-bg-strong:#e2eeeb;
+  --radius-md:10px;
+  --radius-lg:12px;
+  --space-block:.78rem;
 }
 
 *,
@@ -129,7 +132,7 @@ body{
 }
 
 .summary-table-wrap{
-  margin:.9rem 0 1rem 0;
+  margin:var(--space-block) 0 1rem 0;
 }
 
 .summary-kv{
@@ -167,12 +170,12 @@ body{
   display:grid;
   grid-template-columns:repeat(4, minmax(0, 1fr));
   gap:.52rem;
-  margin:.25rem 0 .8rem 0;
+  margin:.3rem 0 var(--space-block) 0;
 }
 
 .stat-card{
   border:1px solid #cfdbd7;
-  border-radius:10px;
+  border-radius:var(--radius-md);
   background:#f9fcfb;
   padding:.55rem .62rem;
 }
@@ -204,7 +207,7 @@ body{
 
 .issue-list{
   display:grid;
-  gap:.38rem;
+  gap:.44rem;
 }
 
 .issue-head,
@@ -229,9 +232,10 @@ body{
 
 .issue-card{
   border:1px solid #d5e1dd;
-  border-radius:10px;
+  border-radius:var(--radius-md);
   padding:.58rem .68rem;
-  background:#fbfdfc;
+  background:#fdfefe;
+  box-shadow:0 1px 0 rgba(15, 23, 42, .03);
 }
 
 .issue-cell{
@@ -259,6 +263,8 @@ body{
 .issue-detail{
   color:#142932;
   margin:0;
+  white-space:pre-wrap;
+  line-height:1.45;
 }
 
 .issue-empty{
@@ -273,7 +279,7 @@ body{
 .report-section{
   background:var(--panel-bg);
   border:1px solid var(--panel-border);
-  border-radius:12px;
+  border-radius:var(--radius-lg);
   margin:.65rem 0;
   overflow:hidden;
   box-shadow:0 7px 18px rgba(15, 23, 42, .05);
@@ -311,6 +317,9 @@ body{
 
 .report-section .section-title{
   color:var(--heading);
+  font-size:.97rem;
+  font-weight:680;
+  letter-spacing:.01em;
 }
 
 .report-section .section-body{
@@ -323,6 +332,8 @@ body{
   font-weight:600;
   background:var(--header-bg);
   color:var(--heading);
+  display:flex;
+  align-items:center;
 }
 
 .report-section.static-section .section-body{
@@ -358,7 +369,9 @@ body{
 }
 
 .section-stack{
-  margin-top:.68rem;
+  margin-top:var(--space-block);
+  display:grid;
+  gap:.02rem;
 }
 
 .report-section pre{
@@ -389,7 +402,7 @@ body{
   }
 
   .report-section{
-    border-radius:10px;
+    border-radius:var(--radius-md);
     margin:.56rem 0;
   }
 
