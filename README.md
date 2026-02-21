@@ -100,6 +100,9 @@ With `report_format="python"` it returns a dictionary of detected issues.
 - `Conventions = "CF-1.12"`
 - standard coordinate attributes for inferred `time`, `lat`, and `lon` axes
 - creation of missing dimension coordinates for inferred axes
+- global extent attributes derived from inferred axes:
+  `time_coverage_start`, `time_coverage_end`, `geospatial_lat_min`, `geospatial_lat_max`,
+  `geospatial_lon_min`, and `geospatial_lon_max`
 
 `ocean_cover()` runs fast ocean-grid checks and returns a report with:
 - east/west edge-of-map detection (persistent missing longitude columns, reported by longitude),
@@ -111,6 +114,7 @@ With `report_format="python"` it returns a dictionary of detected issues.
 time-slice ranges.
 - `report_format="auto"` by default.
 - When `var_name` is omitted, all data variables are checked.
+- Time coordinate units/type validation is reported by `compliance()`.
 
 You can disable individual checks:
 

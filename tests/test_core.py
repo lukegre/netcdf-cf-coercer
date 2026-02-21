@@ -76,6 +76,48 @@ def test_make_compliant_renamed_coord_attrs_enable_axis_inference() -> None:
     assert "Standard_Name" not in out["xcoord"].attrs
 
 
+def test_make_compliant_adds_time_and_lat_extent_attrs() -> None:
+    ds = xr.Dataset(
+        data_vars={"field": (("time", "lat", "lon"), np.ones((2, 3, 2)))},
+        coords={
+            "time": np.array(
+                ["2024-01-01T00:00:00", "2024-01-02T12:00:00"],
+                dtype="datetime64[s]",
+            ),
+            "lat": [11.5, 10.0, 12.25],
+            "lon": [21.0, 19.5],
+        },
+    )
+
+    out = core.make_dataset_compliant(ds)
+
+    assert out.attrs["time_coverage_start"] == "2024-01-01T00:00:00"
+    assert out.attrs["time_coverage_end"] == "2024-01-02T12:00:00"
+    assert out.attrs["geospatial_lat_min"] == 10.0
+    assert out.attrs["geospatial_lat_max"] == 12.25
+    assert out.attrs["geospatial_lon_min"] == 19.5
+    assert out.attrs["geospatial_lon_max"] == 21.0
+
+
+def test_make_compliant_decodes_numeric_cf_time_for_extent_attrs() -> None:
+    ds = xr.Dataset(
+        data_vars={"field": (("time", "lat"), np.ones((2, 2)))},
+        coords={
+            "time": (
+                "time",
+                [0, 2],
+                {"units": "days since 2000-01-01 00:00:00", "calendar": "standard"},
+            ),
+            "lat": [0.0, 1.0],
+        },
+    )
+
+    out = core.make_dataset_compliant(ds)
+
+    assert out.attrs["time_coverage_start"].startswith("2000-01-01")
+    assert out.attrs["time_coverage_end"].startswith("2000-01-03")
+
+
 def test_check_dataset_compliant_raises_if_no_fallback(monkeypatch) -> None:
     def _raise(*args, **kwargs):
         raise RuntimeError("checker failed")
@@ -442,4 +484,54 @@ def test_engine_comparison_keeps_cf_attr_case_checks(monkeypatch) -> None:
         item.get("item") == "attr_case_mismatch"
         for item in heuristic_report["variables"]["temp"]
         if isinstance(item, dict)
+    )
+
+
+def test_compliance_reports_missing_time_units_check(monkeypatch) -> None:
+    monkeypatch.setattr(
+        core, "_run_cfchecker_on_dataset", lambda *a, **k: _empty_cfchecker_report()
+    )
+
+    ds = xr.Dataset(
+        data_vars={"sst": (("time",), [1.0, 2.0], {"units": "K"})},
+        coords={"time": [0, 1]},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="cfchecker",
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    findings = issues["coordinates"]["time"]
+    assert any(
+        isinstance(item, dict) and item.get("item") == "time_coord_units_missing"
+        for item in findings
+    )
+
+
+def test_compliance_reports_invalid_time_type_check(monkeypatch) -> None:
+    monkeypatch.setattr(
+        core, "_run_cfchecker_on_dataset", lambda *a, **k: _empty_cfchecker_report()
+    )
+
+    ds = xr.Dataset(
+        data_vars={"sst": (("time",), [1.0, 2.0], {"units": "K"})},
+        coords={"time": np.array(["2024-01-01", "2024-01-02"], dtype=str)},
+    )
+
+    issues = core.check_dataset_compliant(
+        ds,
+        engine="heuristic",
+        conventions="cf",
+        standard_name_table_xml=None,
+        report_format="python",
+    )
+
+    findings = issues["coordinates"]["time"]
+    assert any(
+        isinstance(item, dict) and item.get("item") == "time_coord_type_invalid"
+        for item in findings
     )

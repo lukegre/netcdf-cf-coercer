@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 import xarray as xr
@@ -21,6 +20,7 @@ from .formatting import (
 
 _LON_CANDIDATES = ("lon", "longitude", "x")
 _LAT_CANDIDATES = ("lat", "latitude", "y")
+LongitudeConvention: TypeAlias = Literal["-180_180", "0_360", "other"]
 
 _LAND_REFERENCE_POINTS = (
     ("sahara", 23.0, 13.0),
@@ -152,63 +152,6 @@ def _value_label(value: Any) -> str:
     return str(value)
 
 
-def _first_non_null_value(values: np.ndarray[Any, Any]) -> Any | None:
-    for value in values.reshape(-1):
-        if value is None:
-            continue
-        if isinstance(value, np.datetime64) and np.isnat(value):
-            continue
-        if isinstance(value, (float, np.floating)) and np.isnan(value):
-            continue
-        return value
-    return None
-
-
-def _is_cftime_datetime(value: Any) -> bool:
-    module_name = getattr(value.__class__, "__module__", "")
-    return module_name.startswith("cftime")
-
-
-def _time_value_type(values: np.ndarray[Any, Any]) -> str:
-    dtype = values.dtype
-    if np.issubdtype(dtype, np.datetime64):
-        return "datetime64"
-    if np.issubdtype(dtype, np.floating):
-        return "float"
-    if np.issubdtype(dtype, np.integer):
-        return "int"
-    if np.issubdtype(dtype, np.str_) or np.issubdtype(dtype, np.bytes_):
-        return "string"
-
-    sample = _first_non_null_value(values)
-    if sample is None:
-        return str(dtype)
-    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
-        return "datetime"
-    if _is_cftime_datetime(sample):
-        return "cftime"
-    if isinstance(sample, (float, np.floating)):
-        return "float"
-    if isinstance(sample, (int, np.integer)) and not isinstance(
-        sample, (bool, np.bool_)
-    ):
-        return "int"
-    if isinstance(sample, (str, bytes, np.str_, np.bytes_)):
-        return "string"
-    return type(sample).__name__
-
-
-def _is_time_decoded_by_xarray(values: np.ndarray[Any, Any]) -> bool:
-    if np.issubdtype(values.dtype, np.datetime64):
-        return True
-    sample = _first_non_null_value(values)
-    if sample is None:
-        return False
-    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
-        return True
-    return _is_cftime_datetime(sample)
-
-
 def _range_records(
     indices: list[int],
     coord: xr.DataArray | None,
@@ -248,7 +191,7 @@ def _value_ranges_from_indices(
     return out
 
 
-def _longitude_convention(lon_values: np.ndarray[Any, Any]) -> str:
+def _longitude_convention(lon_values: np.ndarray[Any, Any]) -> LongitudeConvention:
     lon_min = float(np.nanmin(lon_values))
     lon_max = float(np.nanmax(lon_values))
     eps = 1e-6
@@ -259,7 +202,7 @@ def _longitude_convention(lon_values: np.ndarray[Any, Any]) -> str:
     return "other"
 
 
-def _normalize_lon_for_grid(lon: float, convention: str) -> float:
+def _normalize_lon_for_grid(lon: float, convention: LongitudeConvention) -> float:
     if convention == "0_360":
         return lon % 360.0
     if convention == "-180_180":
@@ -490,76 +433,6 @@ def _time_missing_check(da: xr.DataArray, *, time_dim: str | None) -> dict[str, 
     }
 
 
-def _time_format_check(da: xr.DataArray, *, time_dim: str | None) -> dict[str, Any]:
-    if time_dim is None:
-        return {
-            "enabled": True,
-            "status": "skipped_no_time",
-            "decoded_by_xarray": False,
-            "value_type": None,
-            "dtype": None,
-            "units": None,
-            "message": "No time dimension found on this variable.",
-            "suggestion": None,
-        }
-
-    time_coord = da.coords.get(time_dim)
-    if time_coord is None:
-        return {
-            "enabled": True,
-            "status": "fail",
-            "decoded_by_xarray": False,
-            "value_type": None,
-            "dtype": None,
-            "units": None,
-            "message": f"Time dimension '{time_dim}' has no coordinate values to validate.",
-            "suggestion": (
-                "Use a CF-standard time coordinate and unit, for example "
-                "'days since 1970-01-01 00:00:00' with an optional calendar."
-            ),
-        }
-
-    values = np.asarray(time_coord.values)
-    decoded = _is_time_decoded_by_xarray(values)
-    value_type = _time_value_type(values)
-
-    units: Any = time_coord.attrs.get("units")
-    if units is None:
-        units = time_coord.encoding.get("units")
-    units_text = None if units is None else str(units)
-
-    if decoded:
-        return {
-            "enabled": True,
-            "status": "pass",
-            "decoded_by_xarray": True,
-            "value_type": value_type,
-            "dtype": str(values.dtype),
-            "units": units_text,
-            "message": "Time coordinate is decoded to datetime values by xarray.",
-            "suggestion": None,
-        }
-
-    suggestion = (
-        "Use a CF-standard time format and unit (for example numeric offsets with "
-        "units like 'days since 1970-01-01 00:00:00') so xarray can decode time."
-    )
-    units_fragment = units_text if units_text else "missing"
-    return {
-        "enabled": True,
-        "status": "fail",
-        "decoded_by_xarray": False,
-        "value_type": value_type,
-        "dtype": str(values.dtype),
-        "units": units_text,
-        "message": (
-            f"Time coordinate '{time_dim}' is not decoded to datetime values "
-            f"(value_type={value_type}, dtype={values.dtype}, units={units_fragment})."
-        ),
-        "suggestion": suggestion,
-    }
-
-
 def _single_ocean_report(
     da: xr.DataArray,
     *,
@@ -640,16 +513,11 @@ def _single_time_cover_report(
     time_dim: str | None,
 ) -> dict[str, Any]:
     time_missing = _time_missing_check(da, time_dim=time_dim)
-    time_format = _time_format_check(da, time_dim=time_dim)
-    statuses = [
-        str(time_missing.get("status")).lower(),
-        str(time_format.get("status")).lower(),
-    ]
+    statuses = [str(time_missing.get("status")).lower()]
     return {
         "variable": str(da.name),
         "time_dim": time_dim,
         "time_missing": time_missing,
-        "time_format": time_format,
         "ok": not any(status in {"fail", "error"} for status in statuses),
     }
 
@@ -668,7 +536,40 @@ def check_ocean_cover(
     check_edge_sliver: bool | None = None,
     check_time_missing: bool | None = None,
 ) -> dict[str, Any] | str | None:
-    """Run fast ocean-coverage sanity checks on one or more gridded variables."""
+    """Run ocean-coverage sanity checks on one or more gridded variables.
+
+    Parameters
+    ----------
+    ds
+        Dataset containing gridded data variables.
+    var_name
+        Optional variable name. If omitted, all variables that use inferred
+        lon/lat dimensions are checked.
+    lon_name, lat_name
+        Longitude and latitude coordinate names. If omitted, they are inferred
+        from common names/units.
+    time_name
+        Preferred time dimension name used by checks that sample in time.
+    check_edge_of_map
+        Check for persistent missing longitude bands at map edges.
+    check_land_ocean_offset
+        Check land/ocean fill alignment using reference points on global grids.
+    report_format
+        ``"python"``, ``"tables"``, ``"html"``, or ``"auto"``.
+    report_html_file
+        Output path when ``report_format="html"``.
+    check_edge_sliver
+        Backward-compatible alias for ``check_edge_of_map``.
+    check_time_missing
+        Deprecated compatibility option; time coverage moved to
+        :func:`check_time_cover`.
+
+    Returns
+    -------
+    dict | str | None
+        Per-variable or multi-variable report for ``"python"``, HTML for
+        ``"html"``, or ``None`` for ``"tables"`` (printed output).
+    """
     resolved_format = normalize_report_format(report_format)
     if report_html_file is not None and resolved_format != "html":
         raise ValueError("`report_html_file` is only valid when report_format='html'.")
@@ -742,7 +643,27 @@ def check_time_cover(
     report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
 ) -> dict[str, Any] | str | None:
-    """Run time-coverage checks and report missing time-slice ranges."""
+    """Run time-coverage checks and report missing time-slice ranges.
+
+    Parameters
+    ----------
+    ds
+        Dataset containing variables to inspect.
+    var_name
+        Optional variable name. If omitted, all data variables are checked.
+    time_name
+        Preferred time dimension name.
+    report_format
+        ``"python"``, ``"tables"``, ``"html"``, or ``"auto"``.
+    report_html_file
+        Output path when ``report_format="html"``.
+
+    Returns
+    -------
+    dict | str | None
+        Per-variable or multi-variable report for ``"python"``, HTML for
+        ``"html"``, or ``None`` for ``"tables"`` (printed output).
+    """
     resolved_format = normalize_report_format(report_format)
     if report_html_file is not None and resolved_format != "html":
         raise ValueError("`report_html_file` is only valid when report_format='html'.")

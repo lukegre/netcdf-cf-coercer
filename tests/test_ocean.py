@@ -95,11 +95,7 @@ def test_time_cover_reports_ranges() -> None:
     assert report["time_missing"]["missing_slice_ranges"] == [
         {"start_index": 1, "end_index": 2, "start": "1", "end": "2"}
     ]
-    assert report["time_format"]["status"] == "fail"
-    assert report["time_format"]["value_type"] == "int"
-    assert "CF-standard time format and unit" in str(
-        report["time_format"]["suggestion"]
-    )
+    assert "time_format" not in report
 
 
 def test_time_cover_accepts_xarray_decoded_time_coordinates() -> None:
@@ -116,20 +112,19 @@ def test_time_cover_accepts_xarray_decoded_time_coordinates() -> None:
     report = ds.check.time_cover(var_name="sst", report_format="python")
 
     assert report["time_missing"]["status"] == "pass"
-    assert report["time_format"]["status"] == "pass"
-    assert report["time_format"]["decoded_by_xarray"] is True
+    assert "time_format" not in report
     assert report["ok"] is True
 
 
 @pytest.mark.parametrize(
-    ("time_values", "expected_value_type"),
+    "time_values",
     [
-        (np.array([0.0, 1.0], dtype=float), "float"),
-        (np.array(["2024-01-01", "2024-01-02"], dtype=str), "string"),
+        np.array([0.0, 1.0], dtype=float),
+        np.array(["2024-01-01", "2024-01-02"], dtype=str),
     ],
 )
 def test_time_cover_reports_non_cf_time_types(
-    time_values: np.ndarray, expected_value_type: str
+    time_values: np.ndarray,
 ) -> None:
     lat = np.array([-45.0, 45.0])
     lon = np.arange(0.0, 360.0, 60.0)
@@ -142,11 +137,9 @@ def test_time_cover_reports_non_cf_time_types(
 
     report = ds.check.time_cover(var_name="sst", report_format="python")
 
-    assert report["time_format"]["status"] == "fail"
-    assert report["time_format"]["value_type"] == expected_value_type
-    assert "CF-standard time format and unit" in str(
-        report["time_format"]["suggestion"]
-    )
+    assert report["time_missing"]["status"] == "pass"
+    assert report["ok"] is True
+    assert "time_format" not in report
 
 
 def test_ocean_cover_without_var_name_checks_all_eligible_variables() -> None:

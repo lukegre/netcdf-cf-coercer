@@ -23,6 +23,9 @@
   --hero-accent-b:#f59e0b;
   --header-bg:#eef4f2;
   --header-bg-strong:#e2eeeb;
+  --radius-md:10px;
+  --radius-lg:12px;
+  --space-block:.78rem;
 }
 
 *,
@@ -104,7 +107,7 @@ body{
 }
 
 .summary-table-wrap{
-  margin:.9rem 0 1rem 0;
+  margin:var(--space-block) 0 1rem 0;
 }
 
 .summary-kv{
@@ -142,12 +145,12 @@ body{
   display:grid;
   grid-template-columns:repeat(4, minmax(0, 1fr));
   gap:.52rem;
-  margin:.25rem 0 .8rem 0;
+  margin:.3rem 0 var(--space-block) 0;
 }
 
 .stat-card{
   border:1px solid #cfdbd7;
-  border-radius:10px;
+  border-radius:var(--radius-md);
   background:#f9fcfb;
   padding:.55rem .62rem;
 }
@@ -179,7 +182,7 @@ body{
 
 .issue-list{
   display:grid;
-  gap:.38rem;
+  gap:.44rem;
 }
 
 .issue-head,
@@ -204,9 +207,10 @@ body{
 
 .issue-card{
   border:1px solid #d5e1dd;
-  border-radius:10px;
+  border-radius:var(--radius-md);
   padding:.58rem .68rem;
-  background:#fbfdfc;
+  background:#fdfefe;
+  box-shadow:0 1px 0 rgba(15, 23, 42, .03);
 }
 
 .issue-cell{
@@ -234,6 +238,8 @@ body{
 .issue-detail{
   color:#142932;
   margin:0;
+  white-space:pre-wrap;
+  line-height:1.45;
 }
 
 .issue-empty{
@@ -248,7 +254,7 @@ body{
 .report-section{
   background:var(--panel-bg);
   border:1px solid var(--panel-border);
-  border-radius:12px;
+  border-radius:var(--radius-lg);
   margin:.65rem 0;
   overflow:hidden;
   box-shadow:0 7px 18px rgba(15, 23, 42, .05);
@@ -286,6 +292,9 @@ body{
 
 .report-section .section-title{
   color:var(--heading);
+  font-size:.97rem;
+  font-weight:680;
+  letter-spacing:.01em;
 }
 
 .report-section .section-body{
@@ -298,6 +307,8 @@ body{
   font-weight:600;
   background:var(--header-bg);
   color:var(--heading);
+  display:flex;
+  align-items:center;
 }
 
 .report-section.static-section .section-body{
@@ -333,7 +344,9 @@ body{
 }
 
 .section-stack{
-  margin-top:.68rem;
+  margin-top:var(--space-block);
+  display:grid;
+  gap:.02rem;
 }
 
 .report-section pre{
@@ -364,7 +377,7 @@ body{
   }
 
   .report-section{
-    border-radius:10px;
+    border-radius:var(--radius-md);
     margin:.56rem 0;
   }
 
@@ -419,18 +432,28 @@ body{
 <main class='report-shell' data-report-root='true'>
 <header class='report-hero'>
 <h1 class='report-title'>CF Compliance Report</h1>
-<p class='report-subtitle mb-0'>Engine: cfchecker · Method: heuristic</p>
+<p class='report-subtitle mb-0'>Engine: heuristic · Method: heuristic</p>
 </header>
 <section class='report-actions'>
 <button type='button' class='btn btn-sm btn-outline-secondary action-button' data-expand-all='true'>Expand all</button>
 <button type='button' class='btn btn-sm btn-outline-secondary action-button' data-collapse-all='true'>Collapse all</button>
 </section>
-<section class='stat-strip'><article class='stat-card'><span class='stat-label'>Variables checked</span><span class='stat-value'>0</span></article><article class='stat-card status-fail'><span class='stat-label'>Errors + fatals</span><span class='stat-value'>2</span></article><article class='stat-card'><span class='stat-label'>Warnings</span><span class='stat-value'>0</span></article><article class='stat-card status-warn'><span class='stat-label'>Engine status</span><span class='stat-value'>UNAVAILABLE</span></article></section><section class='summary-table-wrap'><dl class='summary-table summary-kv'><div class='kv-row'><dt class='kv-label'>CF version</dt><dd class='kv-value'>CF-1.12</dd></div><div class='kv-row'><dt class='kv-label'>Engine</dt><dd class='kv-value'>cfchecker</dd></div><div class='kv-row'><dt class='kv-label'>Engine status</dt><dd class='kv-value'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARNING</span></dd></div><div class='kv-row'><dt class='kv-label'>Check method</dt><dd class='kv-value'>heuristic</dd></div><div class='kv-row'><dt class='kv-label'>Conventions</dt><dd class='kv-value'>cf, ferret</dd></div><div class='kv-row'><dt class='kv-label'>Counts</dt><dd class='kv-value'>fatal=2 error=0 warn=0</dd></div></dl></section><section class='section-stack'><section class='report-section static-section'><div class='section-header'><span class='section-title'>Global Findings</span></div><div class='section-body'><section class='issue-list'><div class='issue-head'><span class='issue-head-status'>Status</span><span class='issue-head-test'>Test Info</span><span class='issue-head-desc'>Description</span></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>global</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Conventions</p></div></section></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Coordinate Findings</span></div><div class='section-body'><section class='issue-list'><div class='issue-head'><span class='issue-head-status'>Status</span><span class='issue-head-test'>Test Info</span><span class='issue-head-desc'>Description</span></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lat</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>coord_attr:long_name</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-danger text-white border border-danger'>FATAL</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lat</p><p class='issue-convention'>Convention: ferret</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lat&#x27; has forbidden _FillValue (encoding=np.float64(nan)).</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lon</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>coord_attr:long_name</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-danger text-white border border-danger'>FATAL</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lon</p><p class='issue-convention'>Convention: ferret</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lon&#x27; has forbidden _FillValue (encoding=np.float64(nan)).</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>time</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>coord_attr:units</p></div></section></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Suggested Improvements</span></div><div class='section-body'><div class='table-responsive'><table class='table table-sm align-middle report-table'><thead><tr><th>Variable</th><th>Suggestion</th></tr></thead><tbody><tr><td>fgco2</td><td><pre>recommended_standard_names:
-  - ocean_volume
+<section class='stat-strip'><article class='stat-card'><span class='stat-label'>Variables checked</span><span class='stat-value'>0</span></article><article class='stat-card status-fail'><span class='stat-label'>Errors + fatals</span><span class='stat-value'>1</span></article><article class='stat-card status-warn'><span class='stat-label'>Warnings</span><span class='stat-value'>8</span></article><article class='stat-card'><span class='stat-label'>Engine status</span><span class='stat-value'>OK</span></article></section><section class='summary-table-wrap'><dl class='summary-table summary-kv'><div class='kv-row'><dt class='kv-label'>CF version</dt><dd class='kv-value'>CF-1.12</dd></div><div class='kv-row'><dt class='kv-label'>Engine</dt><dd class='kv-value'>heuristic</dd></div><div class='kv-row'><dt class='kv-label'>Engine status</dt><dd class='kv-value'><span class='badge report-badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle'>PASSED</span></dd></div><div class='kv-row'><dt class='kv-label'>Check method</dt><dd class='kv-value'>heuristic</dd></div><div class='kv-row'><dt class='kv-label'>Conventions</dt><dd class='kv-value'>cf, ferret</dd></div><div class='kv-row'><dt class='kv-label'>Counts</dt><dd class='kv-value'>fatal=0 error=1 warn=8</dd></div></dl></section><section class='section-stack'><section class='report-section static-section'><div class='section-header'><span class='section-title'>Global Findings</span></div><div class='section-body'><section class='issue-list'><div class='issue-head'><span class='issue-head-status'>Status</span><span class='issue-head-test'>Test Info</span><span class='issue-head-desc'>Description</span></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>global</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Global attribute &#x27;Conventions&#x27; is missing.</p></div></section></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Coordinate Findings</span></div><div class='section-body'><section class='issue-list'><div class='issue-head'><span class='issue-head-status'>Status</span><span class='issue-head-test'>Test Info</span><span class='issue-head-desc'>Description</span></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>time</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;time&#x27; is inferred as time and expects standard_name=&#x27;time&#x27;, but found missing.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-danger-subtle text-danger-emphasis border border-danger-subtle'>ERROR</span></div><div class='issue-cell issue-test'><p class='issue-scope'>time</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Time coordinate &#x27;time&#x27; units are not CF-style: &#x27;Fractional year&#x27;.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lat</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lat&#x27; is inferred as latitude and expects standard_name=&#x27;latitude&#x27;, but found missing.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lat</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lat&#x27; is inferred as latitude and expects long_name=&#x27;latitude&#x27;, but found &#x27;Latitude&#x27;.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lat</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lat&#x27; is inferred as latitude and expects units=&#x27;degrees_north&#x27;, but found missing.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lon</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lon&#x27; is inferred as longitude and expects standard_name=&#x27;longitude&#x27;, but found missing.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lon</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lon&#x27; is inferred as longitude and expects long_name=&#x27;longitude&#x27;, but found &#x27;Longitude&#x27;.</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle'>WARN</span></div><div class='issue-cell issue-test'><p class='issue-scope'>lon</p><p class='issue-convention'>Convention: cf</p></div><p class='issue-cell issue-detail'>Coordinate &#x27;lon&#x27; is inferred as longitude and expects units=&#x27;degrees_east&#x27;, but found missing.</p></div></section></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Suggested Improvements</span></div><div class='section-body'><section class='issue-list'><div class='issue-head'><span class='issue-head-status'>Status</span><span class='issue-head-test'>Test Info</span><span class='issue-head-desc'>Description</span></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>fgco2</p><p class='issue-convention'>Convention: suggestion</p></div><p class='issue-cell issue-detail'>recommended_standard_names:
+  - sea_surface_density
+  - sea_water_density
+  - air_density
+recommended_units: kg m-3
+domain: ocean</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>sfco2</p><p class='issue-convention'>Convention: suggestion</p></div><p class='issue-cell issue-detail'>recommended_standard_names:
+  - sea_surface_density
+  - sea_surface_elevation
+  - sea_surface_height
+recommended_units: kg m-3
+domain: ocean</p></div><div class='issue-row issue-card'><div class='issue-cell issue-status'><span class='badge report-badge rounded-pill bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle'>INFO</span></div><div class='issue-cell issue-test'><p class='issue-scope'>area</p><p class='issue-convention'>Convention: suggestion</p></div><p class='issue-cell issue-detail'>recommended_standard_names:
+  - cell_area
   - sea_area
-  - air_pressure_at_sea_level
-recommended_units: m3
-domain: ocean</pre></td></tr><tr><td>sfco2</td><td><pre>unknown_standard_name: Sea surface fCO2</pre></td></tr></tbody></table></div></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Notes</span></div><div class='section-body'><div class='table-responsive'><table class='table table-sm align-middle report-table'><thead><tr><th>Note</th></tr></thead><tbody><tr><td>cfchecker could not run; returned heuristic checks instead.</td></tr></tbody></table></div></div></section><section class='report-section static-section'><div class='section-header'><span class='section-title'>Checker Error</span></div><div class='section-body'><pre class='mb-0'>{&#x27;type&#x27;: &#x27;RuntimeError&#x27;, &#x27;message&#x27;: &#x27;cfchecker is not installed. Install optional CF dependencies with `uv sync --extra cf`.&#x27;}</pre></div></section></section>
+  - square_of_sea_surface_salinity
+recommended_units: m2
+domain: ocean</p></div></section></div></section></section>
 </main>
 <script>
 (function () {

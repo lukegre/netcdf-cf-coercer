@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import warnings
 from copy import deepcopy
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Literal
+import re
+from typing import Any, Literal, TypeAlias, cast
 
 import numpy as np
 import xarray as xr
@@ -28,14 +30,27 @@ from .standard_names import augment_issues_with_standard_name_suggestions
 CF_VERSION = "CF-1.12"
 CF_STANDARD_NAME_TABLE_URL = "https://cfconventions.org/Data/cf-standard-names/current/src/cf-standard-name-table.xml"
 ComplianceEngine = Literal["auto", "cfchecker", "cfcheck", "heuristic"]
+NormalizedComplianceEngine: TypeAlias = Literal["auto", "cfchecker", "heuristic"]
+ConventionName: TypeAlias = Literal["cf", "ferret"]
+StandardNameDomain: TypeAlias = Literal[
+    "ocean",
+    "atmosphere",
+    "land",
+    "cryosphere",
+    "biogeochemistry",
+]
 _CFCHECKER_INSTALL_HINT = (
     "cfchecker is not installed. Install optional CF dependencies "
     "with `uv sync --extra cf`."
 )
 
 _NON_COMPLIANT_CATEGORIES = ("FATAL", "ERROR", "WARN")
-_SUPPORTED_CONVENTIONS = ("cf", "ferret")
-_DEFAULT_CONVENTIONS = ("cf", "ferret")
+_SUPPORTED_CONVENTIONS: tuple[ConventionName, ...] = ("cf", "ferret")
+_DEFAULT_CONVENTIONS: tuple[ConventionName, ...] = ("cf", "ferret")
+_TIME_UNITS_RE = re.compile(
+    r"^\s*(seconds?|minutes?|hours?|days?|months?|years?)\s+since\s+.+$",
+    re.IGNORECASE,
+)
 _CF_ATTR_CASE_KEYS = (
     "units",
     "standard_name",
@@ -67,27 +82,20 @@ def _empty_report(cf_version: str = "1.12") -> dict[str, Any]:
 
 def _normalize_requested_conventions(
     conventions: str | list[str] | tuple[str, ...] | None,
-) -> tuple[str, ...]:
+) -> tuple[ConventionName, ...]:
     if conventions is None:
         return _DEFAULT_CONVENTIONS
 
     if isinstance(conventions, str):
-        raw = [part.strip() for part in conventions.split(",")]
+        raw = [part.strip().lower() for part in conventions.split(",")]
     else:
-        raw = [str(part).strip() for part in conventions]
+        raw = [str(part).strip().lower() for part in conventions]
 
-    selected: list[str] = []
-    for name in raw:
-        if not name:
-            continue
-        lowered = name.lower()
-        if lowered not in selected:
-            selected.append(lowered)
-
-    if not selected:
+    selected_raw = [name for name in raw if name]
+    if not selected_raw:
         raise ValueError("At least one convention must be selected.")
 
-    unknown = sorted(set(selected) - set(_SUPPORTED_CONVENTIONS))
+    unknown = sorted(set(selected_raw) - set(_SUPPORTED_CONVENTIONS))
     if unknown:
         allowed = ", ".join(_SUPPORTED_CONVENTIONS)
         invalid = ", ".join(unknown)
@@ -95,10 +103,15 @@ def _normalize_requested_conventions(
             f"Unsupported conventions: {invalid}. Supported conventions: {allowed}."
         )
 
+    selected: list[ConventionName] = []
+    for name in selected_raw:
+        convention = cast(ConventionName, name)
+        if convention not in selected:
+            selected.append(convention)
     return tuple(selected)
 
 
-def _normalize_requested_engine(engine: str | None) -> str:
+def _normalize_requested_engine(engine: str | None) -> NormalizedComplianceEngine:
     if engine is None:
         return "auto"
     normalized = str(engine).strip().lower()
@@ -108,7 +121,7 @@ def _normalize_requested_engine(engine: str | None) -> str:
         raise ValueError(
             "Unsupported engine. Expected one of: auto, cfchecker, cfcheck, heuristic."
         )
-    return normalized
+    return cast(NormalizedComplianceEngine, normalized)
 
 
 def _append_coordinate_finding(
@@ -223,6 +236,175 @@ def _apply_cf_attribute_case_checks(ds: xr.Dataset, issues: dict[str, Any]) -> N
             )
 
 
+def _first_non_null_value(values: np.ndarray[Any, Any]) -> Any | None:
+    for value in values.reshape(-1):
+        if value is None:
+            continue
+        if isinstance(value, np.datetime64) and np.isnat(value):
+            continue
+        if isinstance(value, (float, np.floating)) and np.isnan(value):
+            continue
+        return value
+    return None
+
+
+def _is_cftime_datetime(value: Any) -> bool:
+    module_name = getattr(value.__class__, "__module__", "")
+    return module_name.startswith("cftime")
+
+
+def _time_value_type(values: np.ndarray[Any, Any]) -> str:
+    dtype = values.dtype
+    if np.issubdtype(dtype, np.datetime64):
+        return "datetime64"
+    if np.issubdtype(dtype, np.floating):
+        return "float"
+    if np.issubdtype(dtype, np.integer):
+        return "int"
+    if np.issubdtype(dtype, np.str_) or np.issubdtype(dtype, np.bytes_):
+        return "string"
+
+    sample = _first_non_null_value(values)
+    if sample is None:
+        return str(dtype)
+    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
+        return "datetime"
+    if _is_cftime_datetime(sample):
+        return "cftime"
+    if isinstance(sample, (float, np.floating)):
+        return "float"
+    if isinstance(sample, (int, np.integer)) and not isinstance(
+        sample, (bool, np.bool_)
+    ):
+        return "int"
+    if isinstance(sample, (str, bytes, np.str_, np.bytes_)):
+        return "string"
+    return type(sample).__name__
+
+
+def _is_time_decoded_by_xarray(values: np.ndarray[Any, Any]) -> bool:
+    if np.issubdtype(values.dtype, np.datetime64):
+        return True
+    sample = _first_non_null_value(values)
+    if sample is None:
+        return False
+    if isinstance(sample, np.datetime64) or isinstance(sample, (datetime, date)):
+        return True
+    return _is_cftime_datetime(sample)
+
+
+def _time_coord_candidates(ds: xr.Dataset) -> list[str]:
+    names: set[str] = set()
+    for dim in ds.dims:
+        dim_name = str(dim)
+        guess = guess_axis_for_dim(ds, dim_name)
+        if guess and guess.axis_type == "time" and dim_name in ds.coords:
+            names.add(dim_name)
+
+    for coord_name, coord in ds.coords.items():
+        name = str(coord_name)
+        lowered_name = name.strip().lower()
+        lowered_standard_name = (
+            str(coord.attrs.get("standard_name", "")).strip().lower()
+        )
+        axis = str(coord.attrs.get("axis", "")).strip().upper()
+        if (
+            lowered_name in {"time", "t"}
+            or lowered_standard_name == "time"
+            or axis == "T"
+        ):
+            names.add(name)
+    return sorted(names)
+
+
+def _apply_cf_time_units_and_type_checks(
+    ds: xr.Dataset, issues: dict[str, Any]
+) -> None:
+    for coord_name in _time_coord_candidates(ds):
+        coord = ds.coords.get(coord_name)
+        if coord is None:
+            continue
+        values = np.asarray(coord.values)
+        value_type = _time_value_type(values)
+        decoded = _is_time_decoded_by_xarray(values)
+        units: Any = coord.attrs.get("units")
+        if units is None:
+            units = coord.encoding.get("units")
+        units_text = None if units is None else str(units)
+
+        if decoded:
+            continue
+        if value_type not in {"int", "float"}:
+            _append_coordinate_finding(
+                issues,
+                coord_name,
+                {
+                    "severity": "ERROR",
+                    "convention": "cf",
+                    "item": "time_coord_type_invalid",
+                    "message": (
+                        f"Time coordinate '{coord_name}' has non-time value type "
+                        f"'{value_type}' (dtype={values.dtype})."
+                    ),
+                    "current": {
+                        "value_type": value_type,
+                        "dtype": str(values.dtype),
+                        "units": units_text,
+                    },
+                    "expected": (
+                        "decoded datetime/cftime values or numeric offsets with "
+                        "CF-style units (e.g. 'days since 1970-01-01')."
+                    ),
+                    "suggested_fix": "set_coord_attr",
+                },
+            )
+            continue
+
+        if units_text is None:
+            _append_coordinate_finding(
+                issues,
+                coord_name,
+                {
+                    "severity": "ERROR",
+                    "convention": "cf",
+                    "item": "time_coord_units_missing",
+                    "message": (
+                        f"Time coordinate '{coord_name}' uses numeric values but has no units."
+                    ),
+                    "current": {
+                        "value_type": value_type,
+                        "dtype": str(values.dtype),
+                        "units": None,
+                    },
+                    "expected": "CF time units like 'days since 1970-01-01'.",
+                    "suggested_fix": "set_coord_attr",
+                },
+            )
+            continue
+
+        if not _TIME_UNITS_RE.match(units_text):
+            _append_coordinate_finding(
+                issues,
+                coord_name,
+                {
+                    "severity": "ERROR",
+                    "convention": "cf",
+                    "item": "time_coord_units_format_invalid",
+                    "message": (
+                        f"Time coordinate '{coord_name}' units are not CF-style: "
+                        f"{units_text!r}."
+                    ),
+                    "current": {
+                        "value_type": value_type,
+                        "dtype": str(values.dtype),
+                        "units": units_text,
+                    },
+                    "expected": "units in '<unit> since <epoch>' format.",
+                    "suggested_fix": "set_coord_attr",
+                },
+            )
+
+
 def _apply_ferret_convention_checks(ds: xr.Dataset, issues: dict[str, Any]) -> None:
     for coord_name, coord in ds.coords.items():
         sources: dict[str, Any] = {}
@@ -257,10 +439,11 @@ def _apply_ferret_convention_checks(ds: xr.Dataset, issues: dict[str, Any]) -> N
 
 
 def _apply_selected_convention_checks(
-    ds: xr.Dataset, issues: dict[str, Any], conventions: tuple[str, ...]
+    ds: xr.Dataset, issues: dict[str, Any], conventions: tuple[ConventionName, ...]
 ) -> None:
     if "cf" in conventions:
         _apply_cf_attribute_case_checks(ds, issues)
+        _apply_cf_time_units_and_type_checks(ds, issues)
     if "ferret" in conventions:
         _apply_ferret_convention_checks(ds, issues)
 
@@ -366,6 +549,131 @@ def _format_cf_version(version: str) -> str:
     if version.startswith("CF-"):
         return version
     return f"CF-{version}"
+
+
+def _to_python_scalar(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _coord_bounds(coord: xr.DataArray) -> tuple[Any, Any] | None:
+    try:
+        minimum = coord.min(skipna=True)
+        maximum = coord.max(skipna=True)
+    except TypeError:
+        minimum = coord.min()
+        maximum = coord.max()
+
+    min_values = np.asarray(minimum.values)
+    max_values = np.asarray(maximum.values)
+    if min_values.size == 0 or max_values.size == 0:
+        return None
+
+    min_value = _to_python_scalar(min_values.reshape(-1)[0])
+    max_value = _to_python_scalar(max_values.reshape(-1)[0])
+
+    if min_value is None or max_value is None:
+        return None
+    if isinstance(min_value, (float, np.floating)) and np.isnan(min_value):
+        return None
+    if isinstance(max_value, (float, np.floating)) and np.isnan(max_value):
+        return None
+
+    return min_value, max_value
+
+
+def _decoded_numeric_time_bounds(
+    coord: xr.DataArray, bounds: tuple[Any, Any]
+) -> tuple[Any, Any]:
+    lower, upper = bounds
+    if not isinstance(lower, (int, float, np.integer, np.floating)):
+        return bounds
+    if not isinstance(upper, (int, float, np.integer, np.floating)):
+        return bounds
+
+    units = coord.attrs.get("units")
+    if units is None:
+        units = coord.encoding.get("units")
+    units_text = "" if units is None else str(units).strip()
+    if not units_text or not _TIME_UNITS_RE.match(units_text):
+        return bounds
+
+    calendar = str(
+        coord.attrs.get("calendar", coord.encoding.get("calendar", "standard"))
+    )
+    try:
+        from netCDF4 import num2date
+
+        decoded = num2date([lower, upper], units=units_text, calendar=calendar)
+    except Exception:
+        return bounds
+
+    if len(decoded) != 2:
+        return bounds
+    return _to_python_scalar(decoded[0]), _to_python_scalar(decoded[1])
+
+
+def _format_time_coverage_value(value: Any) -> str:
+    if isinstance(value, np.datetime64):
+        if np.isnat(value):
+            return ""
+        return str(np.datetime_as_string(value, unit="s"))
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if _is_cftime_datetime(value):
+        isoformat = getattr(value, "isoformat", None)
+        if callable(isoformat):
+            return str(isoformat())
+    return str(value)
+
+
+def _first_axis_coord_name(
+    ds: xr.Dataset, axis_guesses: dict[str, AxisGuess], axis_type: str
+) -> str | None:
+    for dim, guess in sorted(axis_guesses.items()):
+        if guess.axis_type == axis_type and dim in ds.coords:
+            return dim
+    return None
+
+
+def _update_extent_attrs_from_coords(
+    ds: xr.Dataset, axis_guesses: dict[str, AxisGuess]
+) -> None:
+    time_coord_name = _first_axis_coord_name(ds, axis_guesses, "time")
+    if time_coord_name is not None:
+        time_bounds = _coord_bounds(ds.coords[time_coord_name])
+        if time_bounds is not None:
+            decoded_bounds = _decoded_numeric_time_bounds(
+                ds.coords[time_coord_name], time_bounds
+            )
+            start = _format_time_coverage_value(decoded_bounds[0])
+            end = _format_time_coverage_value(decoded_bounds[1])
+            if start and end:
+                ds.attrs["time_coverage_start"] = start
+                ds.attrs["time_coverage_end"] = end
+
+    lat_coord_name = _first_axis_coord_name(ds, axis_guesses, "lat")
+    if lat_coord_name is not None:
+        lat_bounds = _coord_bounds(ds.coords[lat_coord_name])
+        if lat_bounds is not None:
+            try:
+                ds.attrs["geospatial_lat_min"] = float(lat_bounds[0])
+                ds.attrs["geospatial_lat_max"] = float(lat_bounds[1])
+            except (TypeError, ValueError):
+                pass
+
+    lon_coord_name = _first_axis_coord_name(ds, axis_guesses, "lon")
+    if lon_coord_name is not None:
+        lon_bounds = _coord_bounds(ds.coords[lon_coord_name])
+        if lon_bounds is not None:
+            try:
+                ds.attrs["geospatial_lon_min"] = float(lon_bounds[0])
+                ds.attrs["geospatial_lon_max"] = float(lon_bounds[1])
+            except (TypeError, ValueError):
+                pass
 
 
 def _translate_cfchecker_results(
@@ -478,14 +786,54 @@ def check_dataset_compliant(
     cf_area_types_xml: str | None = None,
     cf_region_names_xml: str | None = None,
     cache_tables: bool = False,
-    domain: str | None = None,
+    domain: StandardNameDomain | None = None,
     fallback_to_heuristic: bool = True,
     engine: ComplianceEngine = "auto",
     conventions: str | list[str] | tuple[str, ...] | None = None,
     report_format: ReportFormat = "auto",
     report_html_file: str | Path | None = None,
 ) -> dict[str, Any] | str | None:
-    """Run compliance checks for selected conventions (e.g. CF, Ferret)."""
+    """Run compliance checks for selected conventions (for example CF/Ferret).
+
+    Parameters
+    ----------
+    ds
+        Dataset to validate.
+    cf_version
+        CF version passed into the checker (for example ``"1.12"``).
+    standard_name_table_xml, cf_area_types_xml, cf_region_names_xml
+        Optional local/remote XML tables used by ``cfchecker``.
+    cache_tables
+        Reuse cached checker tables between runs.
+    domain
+        Optional standard-name suggestion filter:
+        ``Literal["ocean", "atmosphere", "land", "cryosphere", "biogeochemistry"]``.
+    fallback_to_heuristic
+        If ``True``, fall back to built-in heuristic checks when ``cfchecker``
+        is unavailable or fails.
+    engine
+        ``Literal["auto", "cfchecker", "cfcheck", "heuristic"]``.
+    conventions
+        Conventions to enforce: ``"cf"``, ``"ferret"``, or both.
+    report_format
+        ``Literal["auto", "python", "tables", "html"]``.
+    report_html_file
+        Output path when ``report_format="html"``.
+
+    Returns
+    -------
+    dict | str | None
+        A report dictionary for ``"python"``, HTML for ``"html"``, or ``None``
+        for ``"tables"`` (printed output).
+
+    Raises
+    ------
+    ValueError
+        If unsupported conventions/engine are requested, or HTML output options
+        are used with a non-HTML format.
+    Exception
+        Re-raises checker errors when ``fallback_to_heuristic=False``.
+    """
     resolved_format = normalize_report_format(report_format)
     if report_html_file is not None and resolved_format != "html":
         raise ValueError("`report_html_file` is only valid when report_format='html'.")
@@ -562,7 +910,25 @@ def check_dataset_compliant(
 
 
 def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
-    """Return a copy of the dataset with safe CF-1.12 compliance fixes."""
+    """Return a copied dataset with safe, non-destructive CF metadata fixes.
+
+    The function normalizes common metadata issues while preserving data values:
+    - sets ``Conventions`` to ``"CF-1.12"``
+    - normalizes key CF attribute names to lowercase expected forms
+    - ensures inferred axis coordinates carry expected CF metadata
+    - updates time and geospatial extent attributes when possible
+    - removes coordinate ``_FillValue`` to avoid downstream tool conflicts
+
+    Parameters
+    ----------
+    ds
+        Input dataset. The original object is not modified.
+
+    Returns
+    -------
+    xr.Dataset
+        A deep-copied dataset with compliance-oriented metadata updates.
+    """
     out = ds.copy(deep=True)
 
     out.attrs = deepcopy(out.attrs)
@@ -607,6 +973,8 @@ def make_dataset_compliant(ds: xr.Dataset) -> xr.Dataset:
             out = out.assign_coords({dim: coerced})
         else:
             out[dim].attrs = new_attrs
+
+    _update_extent_attrs_from_coords(out, axis_guesses)
 
     # Ferret (and some other tools) can fail when coordinate variables include
     # _FillValue. Explicitly disable it for all coordinates.

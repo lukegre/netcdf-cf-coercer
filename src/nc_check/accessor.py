@@ -3,12 +3,16 @@ from __future__ import annotations
 from functools import wraps
 from pathlib import Path
 from typing import Any
+from typing import Literal
+from typing import TypeAlias
+from typing import TypedDict
 
 import xarray as xr
 
 from .core import (
     CF_STANDARD_NAME_TABLE_URL,
     ComplianceEngine,
+    StandardNameDomain,
     check_dataset_compliant,
     make_dataset_compliant,
 )
@@ -26,9 +30,17 @@ from .ocean import (
 )
 
 _WRAPS_ASSIGNED = ("__module__", "__name__", "__qualname__", "__annotations__")
+CheckStatusKind: TypeAlias = Literal["pass", "fail", "warn", "skip"]
+SummaryStatus: TypeAlias = Literal["pass", "fail", "warn"]
 
 
-def _status_kind(status: Any) -> str:
+class _CheckSummaryItem(TypedDict):
+    check: Literal["compliance", "ocean_cover", "time_cover"]
+    status: SummaryStatus
+    detail: str
+
+
+def _status_kind(status: Any) -> CheckStatusKind:
     if isinstance(status, bool):
         return "pass" if status else "fail"
     normalized = str(status).strip().lower()
@@ -41,7 +53,7 @@ def _status_kind(status: Any) -> str:
     return "warn"
 
 
-def _combine_statuses(statuses: list[str]) -> str:
+def _combine_statuses(statuses: list[CheckStatusKind]) -> SummaryStatus:
     if any(status == "fail" for status in statuses):
         return "fail"
     if any(status == "warn" for status in statuses):
@@ -58,7 +70,7 @@ def _count_to_int(value: Any) -> int:
         return 0
 
 
-def _status_from_compliance_report(report: dict[str, Any]) -> str:
+def _status_from_compliance_report(report: dict[str, Any]) -> SummaryStatus:
     checker_error = report.get("checker_error")
     if checker_error is not None:
         return "fail"
@@ -74,7 +86,7 @@ def _status_from_compliance_report(report: dict[str, Any]) -> str:
             return "warn"
         return "pass"
 
-    finding_statuses: list[str] = []
+    finding_statuses: list[CheckStatusKind] = []
     for item in report.get("global", []) or []:
         if isinstance(item, dict):
             finding_statuses.append(_status_kind(item.get("severity")))
@@ -97,7 +109,7 @@ def _status_from_compliance_report(report: dict[str, Any]) -> str:
     return _combine_statuses(finding_statuses)
 
 
-def _status_from_ocean_report(report: dict[str, Any]) -> str:
+def _status_from_ocean_report(report: dict[str, Any]) -> SummaryStatus:
     if report.get("mode") == "all_variables":
         grouped = report.get("reports")
         if not isinstance(grouped, dict) or not grouped:
@@ -110,7 +122,7 @@ def _status_from_ocean_report(report: dict[str, Any]) -> str:
             ]
         )
 
-    statuses: list[str] = []
+    statuses: list[CheckStatusKind] = []
     for check_name in ("edge_of_map", "land_ocean_offset", "time_missing"):
         check_report = report.get(check_name)
         if isinstance(check_report, dict):
@@ -120,7 +132,7 @@ def _status_from_ocean_report(report: dict[str, Any]) -> str:
     return _combine_statuses(statuses)
 
 
-def _status_from_time_cover_report(report: dict[str, Any]) -> str:
+def _status_from_time_cover_report(report: dict[str, Any]) -> SummaryStatus:
     if report.get("mode") == "all_variables":
         grouped = report.get("reports")
         if not isinstance(grouped, dict) or not grouped:
@@ -132,13 +144,10 @@ def _status_from_time_cover_report(report: dict[str, Any]) -> str:
                 if isinstance(per_var, dict)
             ]
         )
-    statuses: list[str] = []
+    statuses: list[CheckStatusKind] = []
     time_missing = report.get("time_missing")
     if isinstance(time_missing, dict):
         statuses.append(_status_kind(time_missing.get("status")))
-    time_format = report.get("time_format")
-    if isinstance(time_format, dict):
-        statuses.append(_status_kind(time_format.get("status")))
     if not statuses:
         statuses.append(_status_kind(report.get("ok")))
     return _combine_statuses(statuses)
@@ -185,25 +194,19 @@ def _time_cover_detail(report: dict[str, Any]) -> str:
         if isinstance(report.get("time_missing"), dict)
         else {}
     )
-    time_format = (
-        report.get("time_format") if isinstance(report.get("time_format"), dict) else {}
-    )
-    return (
-        f"missing_slices={_count_to_int(time_missing.get('missing_slice_count'))} "
-        f"time_format={str(time_format.get('status'))}"
-    )
+    return f"missing_slices={_count_to_int(time_missing.get('missing_slice_count'))}"
 
 
 @xr.register_dataset_accessor("check")
 class CFCoercerAccessor:
-    """Dataset-level CF helpers.
+    """Dataset-level API exposed as ``ds.check`` on any ``xarray.Dataset``.
 
-    Methods:
-    - ``compliance()``: inspect CF-1.12 metadata issues.
-    - ``make_cf_compliant()``: return dataset with safe, automatic fixes applied.
-    - ``ocean_cover()``: run fast ocean-coverage sanity checks.
-    - ``time_cover()``: run time-coverage checks.
-    - ``all()``: run selected checks and create one combined report.
+    This accessor groups CF metadata checks and safe auto-fixes:
+    - ``compliance()`` for CF/Ferret convention validation.
+    - ``make_cf_compliant()`` for non-destructive metadata normalization.
+    - ``make_compliant()`` as a backward-compatible alias of ``make_cf_compliant()``.
+    - ``ocean_cover()`` and ``time_cover()`` for coverage-oriented QA checks.
+    - ``all()`` to run several checks and return one combined report.
     """
 
     def __init__(self, xarray_obj: xr.Dataset) -> None:
@@ -218,28 +221,42 @@ class CFCoercerAccessor:
         cf_area_types_xml: str | None = None,
         cf_region_names_xml: str | None = None,
         cache_tables: bool = False,
-        domain: str | None = None,
+        domain: StandardNameDomain | None = None,
         fallback_to_heuristic: bool = True,
         engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Check CF compliance for this dataset.
+        """Run CF/Ferret compliance checks for this dataset.
 
-        Returns:
-        - environment-dependent output when `report_format="auto"`
-        - `dict` when `report_format="python"`
-        - `None` when `report_format="tables"` (report is printed)
-        - `str` when `report_format="html"` (HTML report)
+        Parameters
+        ----------
+        cf_version
+            CF version passed to the checker (for example ``"1.12"``).
+        standard_name_table_xml, cf_area_types_xml, cf_region_names_xml
+            Optional local/remote XML resources used by ``cfchecker``.
+        cache_tables
+            Reuse downloaded checker tables between runs.
+        domain
+            ``Literal["ocean", "atmosphere", "land", "cryosphere",
+            "biogeochemistry"] | None`` to bias standard-name suggestions.
+        fallback_to_heuristic
+            If ``True``, use built-in heuristic checks when ``cfchecker`` cannot run.
+        engine
+            ``Literal["auto", "cfchecker", "cfcheck", "heuristic"]``.
+        conventions
+            Convention set to enforce (``"cf"``, ``"ferret"``, or both).
+        report_format
+            ``Literal["auto", "python", "tables", "html"]``.
+        report_html_file
+            Output file path when ``report_format="html"``.
 
-        Notes:
-        - Uses `cfchecker` against an in-memory NetCDF payload.
-        - Falls back to heuristic checks when `cfchecker` cannot run and
-          `fallback_to_heuristic=True`.
-        - Use `engine="heuristic"` to force the built-in heuristic checker.
-        - Supports extra convention checks such as ``ferret`` via
-          `conventions="cf,ferret"` (or list/tuple).
+        Returns
+        -------
+        dict | str | None
+            A Python report dictionary for ``"python"``, HTML for ``"html"``,
+            or ``None`` for ``"tables"`` (printed output).
         """
         return check_dataset_compliant(
             self._ds,
@@ -265,14 +282,14 @@ class CFCoercerAccessor:
         cf_area_types_xml: str | None = None,
         cf_region_names_xml: str | None = None,
         cache_tables: bool = False,
-        domain: str | None = None,
+        domain: StandardNameDomain | None = None,
         fallback_to_heuristic: bool = True,
         engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Backward-compatible alias for `compliance()`."""
+        """Backward-compatible alias for :meth:`compliance`."""
         return self.compliance(
             cf_version=cf_version,
             standard_name_table_xml=standard_name_table_xml,
@@ -289,17 +306,24 @@ class CFCoercerAccessor:
 
     @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
     def make_cf_compliant(self) -> xr.Dataset:
-        """Return a new dataset with safe CF-1.12 metadata fixes applied."""
+        """Return a copied dataset with safe CF-1.12 metadata fixes applied.
+
+        This method is non-destructive: the original dataset is unchanged.
+        """
         return make_dataset_compliant(self._ds)
 
     @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
     def comply(self) -> xr.Dataset:
-        """Alias for `make_cf_compliant()`."""
+        """Alias for :meth:`make_cf_compliant`."""
         return self.make_cf_compliant()
 
     @wraps(make_dataset_compliant, assigned=_WRAPS_ASSIGNED)
     def make_compliant(self) -> xr.Dataset:
-        """Backward-compatible alias for `make_cf_compliant()`."""
+        """Return a copied dataset with safe CF metadata fixes applied.
+
+        This is a backward-compatible alias for :meth:`make_cf_compliant`.
+        The original dataset is not modified.
+        """
         return self.make_cf_compliant()
 
     @wraps(run_ocean_cover_check, assigned=_WRAPS_ASSIGNED)
@@ -317,7 +341,33 @@ class CFCoercerAccessor:
         check_edge_sliver: bool | None = None,
         check_time_missing: bool | None = None,
     ) -> dict[str, Any] | str | None:
-        """Run fast ocean-coverage checks for a gridded ocean variable."""
+        """Run ocean-coverage sanity checks for gridded variables.
+
+        Parameters
+        ----------
+        var_name
+            Optional variable to check. If omitted, all compatible variables are used.
+        lon_name, lat_name, time_name
+            Coordinate names to use. Longitude/latitude can be inferred.
+        check_edge_of_map
+            Detect persistent missing longitude bands at map edges.
+        check_land_ocean_offset
+            Compare expected land/ocean reference points on global grids.
+        report_format
+            ``"python"``, ``"tables"``, ``"html"``, or ``"auto"``.
+        report_html_file
+            Output file path when ``report_format="html"``.
+        check_edge_sliver
+            Backward-compatible alias for ``check_edge_of_map``.
+        check_time_missing
+            Deprecated no-op retained for compatibility.
+
+        Returns
+        -------
+        dict | str | None
+            A Python report dictionary for ``"python"``, HTML for ``"html"``,
+            or ``None`` for ``"tables"`` (printed output).
+        """
         return run_ocean_cover_check(
             self._ds,
             var_name=var_name,
@@ -347,7 +397,7 @@ class CFCoercerAccessor:
         check_edge_sliver: bool | None = None,
         check_time_missing: bool | None = None,
     ) -> dict[str, Any] | str | None:
-        """Backward-compatible alias for `ocean_cover()`."""
+        """Backward-compatible alias for :meth:`ocean_cover`."""
         return self.ocean_cover(
             var_name=var_name,
             lon_name=lon_name,
@@ -370,7 +420,25 @@ class CFCoercerAccessor:
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Run time-coverage checks for a variable with a time dimension."""
+        """Run time-coverage checks and report missing time-slice ranges.
+
+        Parameters
+        ----------
+        var_name
+            Optional variable to check. If omitted, checks all data variables.
+        time_name
+            Preferred name of the time dimension/coordinate.
+        report_format
+            ``"python"``, ``"tables"``, ``"html"``, or ``"auto"``.
+        report_html_file
+            Output file path when ``report_format="html"``.
+
+        Returns
+        -------
+        dict | str | None
+            A Python report dictionary for ``"python"``, HTML for ``"html"``,
+            or ``None`` for ``"tables"`` (printed output).
+        """
         return run_time_cover_check(
             self._ds,
             var_name=var_name,
@@ -388,7 +456,7 @@ class CFCoercerAccessor:
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Backward-compatible alias for `time_cover()`."""
+        """Backward-compatible alias for :meth:`time_cover`."""
         return self.time_cover(
             var_name=var_name,
             time_name=time_name,
@@ -407,7 +475,7 @@ class CFCoercerAccessor:
         cf_area_types_xml: str | None = None,
         cf_region_names_xml: str | None = None,
         cache_tables: bool = False,
-        domain: str | None = None,
+        domain: StandardNameDomain | None = None,
         fallback_to_heuristic: bool = True,
         engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
@@ -420,7 +488,30 @@ class CFCoercerAccessor:
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Run selected checks and return a combined report."""
+        """Run selected checks and return one combined report.
+
+        Parameters
+        ----------
+        compliance, ocean_cover, time_cover
+            Enable/disable each check family. At least one must be ``True``.
+        cf_version, standard_name_table_xml, cf_area_types_xml, cf_region_names_xml
+            Forwarded to :meth:`compliance` when enabled.
+        cache_tables, domain, fallback_to_heuristic, engine, conventions
+            Forwarded to :meth:`compliance` when enabled.
+        var_name, lon_name, lat_name, time_name
+            Forwarded to coverage checks when enabled.
+        check_edge_of_map, check_land_ocean_offset
+            Forwarded to :meth:`ocean_cover` when enabled.
+        report_format
+            ``"python"``, ``"tables"``, ``"html"``, or ``"auto"``.
+        report_html_file
+            Output file path when ``report_format="html"``.
+
+        Returns
+        -------
+        dict | str | None
+            Combined report as a dictionary, rendered HTML, or ``None`` for tables.
+        """
         resolved_format = normalize_report_format(report_format)
         if report_html_file is not None and resolved_format != "html":
             raise ValueError(
@@ -436,7 +527,7 @@ class CFCoercerAccessor:
             raise ValueError("At least one check must be enabled.")
 
         reports: dict[str, dict[str, Any]] = {}
-        check_summary: list[dict[str, str]] = []
+        check_summary: list[_CheckSummaryItem] = []
 
         if enabled["compliance"]:
             compliance_report = self.compliance(
@@ -538,7 +629,7 @@ class CFCoercerAccessor:
         cf_area_types_xml: str | None = None,
         cf_region_names_xml: str | None = None,
         cache_tables: bool = False,
-        domain: str | None = None,
+        domain: StandardNameDomain | None = None,
         fallback_to_heuristic: bool = True,
         engine: ComplianceEngine = "auto",
         conventions: str | list[str] | tuple[str, ...] | None = None,
@@ -551,7 +642,7 @@ class CFCoercerAccessor:
         report_format: ReportFormat = "auto",
         report_html_file: str | Path | None = None,
     ) -> dict[str, Any] | str | None:
-        """Backward-compatible alias for `all()`."""
+        """Backward-compatible alias for :meth:`all`."""
         return self.all(
             compliance=compliance,
             ocean_cover=ocean_cover,
