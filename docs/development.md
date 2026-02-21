@@ -25,19 +25,19 @@ uv run pytest
 Recommended (no global install):
 
 ```bash
-uv run --with mkdocs mkdocs serve
+uv run --with mkdocs-material mkdocs serve
 ```
 
 Build static site:
 
 ```bash
-uv run --with mkdocs mkdocs build --strict
+uv run --with mkdocs-material mkdocs build --strict
 ```
 
 Alternative (global install):
 
 ```bash
-pip install mkdocs
+pip install mkdocs-material
 mkdocs serve
 ```
 

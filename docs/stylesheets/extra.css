@@ -1,0 +1,35 @@
+:root {
+  --nc-brand-deep: #0b4f6c;
+  --nc-brand-mid: #0b7285;
+  --nc-brand-light: #dff4f8;
+}
+
+/* Subtle ocean gradient in top nav area */
+.md-header {
+  background: linear-gradient(
+    90deg,
+    var(--nc-brand-deep) 0%,
+    var(--nc-brand-mid) 100%
+  );
+}
+
+/* Keep content comfortably readable on large displays */
+.md-grid {
+  max-width: 74rem;
+}
+
+/* Distinct but clean section headings */
+.md-typeset h1 {
+  color: var(--nc-brand-deep);
+  letter-spacing: 0.01em;
+}
+
+.md-typeset h2 {
+  border-bottom: 2px solid var(--nc-brand-light);
+  padding-bottom: 0.2rem;
+}
+
+/* Slightly round code blocks for a softer docs feel */
+.md-typeset pre > code {
+  border-radius: 0.5rem;
+}

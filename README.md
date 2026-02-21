@@ -66,5 +66,5 @@ nc-comply input.nc output.nc
 Local docs site:
 
 ```bash
-uv run --with mkdocs mkdocs serve
+uv run --with mkdocs-material mkdocs serve
 ```
